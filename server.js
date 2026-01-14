@@ -2052,7 +2052,7 @@ app.get('/api/students/:id/programs', async (req, res) => {
     // Filter short-term programs based on targeting
     const studentShortTermPrograms = shortTermResult.rows.filter(program => {
       // Check targeting
-      if (program.target_type === 'all') return true;
+      if (!program.target_type || program.target_type === 'all' || program.target_type === '') return true;
       if (program.target_type === 'college' && program.target_value === student.college_name) return true;
       if (program.target_type === 'department' && program.target_value === student.department_name) return true;
       if (program.target_type === 'course' && program.target_value === student.course_name) return true;
@@ -3087,7 +3087,7 @@ app.get('/api/content', async (req, res) => {
       
       const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
         // Check targeting for short-term programs
-        if (program.target_type === 'all') return true;
+        if (!program.target_type || program.target_type === 'all' || program.target_type === '') return true;
         if (program.target_type === 'college' && program.target_value === studentInfo.college_name) return true;
         if (program.target_type === 'department' && program.target_value === studentInfo.department_name) return true;
         if (program.target_type === 'course' && program.target_value === studentInfo.course_name) return true;
@@ -3390,7 +3390,7 @@ app.get('/api/assignments', async (req, res) => {
       
       const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
         // Check targeting for short-term programs
-        if (program.target_type === 'all') return true;
+        if (!program.target_type || program.target_type === 'all' || program.target_type === '') return true;
         if (program.target_type === 'college' && program.target_value === studentFullInfo.college_name) return true;
         if (program.target_type === 'department' && program.target_value === studentFullInfo.department_name) return true;
         if (program.target_type === 'course' && program.target_value === studentFullInfo.course_name) return true;
@@ -3762,7 +3762,7 @@ app.get('/api/assessments', async (req, res) => {
           
           const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
             // Check targeting for short-term programs
-            if (program.target_type === 'all') return true;
+            if (!program.target_type || program.target_type === 'all' || program.target_type === '') return true;
             if (program.target_type === 'college' && program.target_value === studentFullInfo.college_name) return true;
             if (program.target_type === 'department' && program.target_value === studentFullInfo.department_name) return true;
             if (program.target_type === 'course' && program.target_value === studentFullInfo.course_name) return true;
@@ -4086,7 +4086,7 @@ app.get('/api/student-assessments', async (req, res) => {
         
         const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
           // Check targeting for short-term programs
-          if (program.target_type === 'all') return true;
+          if (!program.target_type || program.target_type === 'all' || program.target_type === '') return true;
           if (program.target_type === 'college' && program.target_value === fullStudentInfo.college_name) return true;
           if (program.target_type === 'department' && program.target_value === fullStudentInfo.department_name) return true;
           if (program.target_type === 'course' && program.target_value === fullStudentInfo.course_name) return true;
@@ -5314,7 +5314,7 @@ app.get('/api/student-assignments', async (req, res) => {
             
             const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
               // Check targeting for short-term programs
-              if (program.target_type === 'all') return true;
+              if (!program.target_type || program.target_type === 'all' || program.target_type === '') return true;
               if (program.target_type === 'college' && program.target_value === studentInfo.college_name) return true;
               if (program.target_type === 'department' && program.target_value === studentInfo.department_name) return true;
               if (program.target_type === 'course' && program.target_value === studentInfo.course_name) return true;
@@ -5802,7 +5802,7 @@ app.get('/api/live-classes', async (req, res) => {
     // Filter short-term programs based on targeting
     const studentShortTermPrograms = shortTermResult.rows.filter(program => {
       // Check targeting
-      if (program.target_type === 'all') return true;
+      if (!program.target_type || program.target_type === 'all' || program.target_type === '') return true;
       if (program.target_type === 'college' && program.target_value === studentInfo.college_name) return true;
       if (program.target_type === 'department' && program.target_value === studentInfo.department_name) return true;
       if (program.target_type === 'course' && program.target_value === studentInfo.course_name) return true;
@@ -6512,7 +6512,7 @@ app.get('/api/discussions', async (req, res) => {
       
       const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
         // Check targeting for short-term programs
-        if (program.target_type === 'all') return true;
+        if (!program.target_type || program.target_type === 'all' || program.target_type === '') return true;
         if (program.target_type === 'college' && program.target_value === studentFullInfo.college_name) return true;
         if (program.target_type === 'department' && program.target_value === studentFullInfo.department_name) return true;
         if (program.target_type === 'course' && program.target_value === studentFullInfo.course_name) return true;
@@ -7119,7 +7119,7 @@ app.get('/api/announcements', async (req, res) => {
       
       const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
         // Check targeting for short-term programs
-        if (program.target_type === 'all') return true;
+        if (!program.target_type || program.target_type === 'all' || program.target_type === '') return true;
         if (program.target_type === 'college' && program.target_value === studentInfo.college_name) return true;
         if (program.target_type === 'department' && program.target_value === studentInfo.department_name) return true;
         if (program.target_type === 'course' && program.target_value === studentInfo.course_name) return true;
@@ -7153,7 +7153,7 @@ app.get('/api/announcements', async (req, res) => {
       // ADMIN ANNOUNCEMENTS - Check targeting
       if (announcement.created_by_type === 'admin') {
         // Show all announcements targeted to "All Students"
-        if (announcement.target_type === 'all') {
+        if (!announcement.target_type || announcement.target_type === 'all' || announcement.target_type === '') {
           console.log(`✅ Admin Announcement - All Students`);
           return true;
         }
@@ -7481,7 +7481,7 @@ app.get('/api/short-term-programs/student', async (req, res) => {
       console.log(`   Target: ${program.target_type} = ${program.target_value}`);
       
       // Check targeting
-      if (program.target_type === 'all') {
+      if (!program.target_type || program.target_type === 'all' || program.target_type === '') {
         console.log(`✅ Program - All Students`);
         return true;
       }
