@@ -2046,7 +2046,7 @@ app.get('/api/students/:id/programs', async (req, res) => {
     
     // Get short-term programs based on targeting
     const shortTermResult = await pool.query(
-      'SELECT * FROM short_term_programs WHERE end_date > NOW() ORDER BY created_at DESC'
+      'SELECT * FROM short_term_programs ORDER BY created_at DESC'
     );
     
     // Filter short-term programs based on targeting
@@ -3082,7 +3082,7 @@ app.get('/api/content', async (req, res) => {
     // CRITICAL: Add short-term programs that student is eligible for
     try {
       const shortTermResult = await pool.query(
-        'SELECT * FROM short_term_programs WHERE end_date > NOW()'
+        'SELECT * FROM short_term_programs ORDER BY created_at DESC'
       );
       
       const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
@@ -3385,7 +3385,7 @@ app.get('/api/assignments', async (req, res) => {
     // CRITICAL: Add short-term programs that student is eligible for
     try {
       const shortTermResult = await pool.query(
-        'SELECT * FROM short_term_programs WHERE end_date > NOW()'
+        'SELECT * FROM short_term_programs ORDER BY created_at DESC'
       );
       
       const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
@@ -3757,7 +3757,7 @@ app.get('/api/assessments', async (req, res) => {
         // CRITICAL: Add short-term programs that student is eligible for
         try {
           const shortTermResult = await pool.query(
-            'SELECT * FROM short_term_programs WHERE end_date > NOW()'
+            'SELECT * FROM short_term_programs ORDER BY created_at DESC'
           );
           
           const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
@@ -4081,7 +4081,7 @@ app.get('/api/student-assessments', async (req, res) => {
         const fullStudentInfo = fullStudentResult.rows[0];
         
         const shortTermResult = await pool.query(
-          'SELECT * FROM short_term_programs WHERE end_date > NOW()'
+          'SELECT * FROM short_term_programs ORDER BY created_at DESC'
         );
         
         const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
@@ -5309,7 +5309,7 @@ app.get('/api/student-assignments', async (req, res) => {
           // Add short-term programs that student is eligible for
           try {
             const shortTermResult = await pool.query(
-              'SELECT * FROM short_term_programs WHERE end_date > NOW()'
+              'SELECT * FROM short_term_programs ORDER BY created_at DESC'
             );
             
             const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
@@ -5796,7 +5796,7 @@ app.get('/api/live-classes', async (req, res) => {
     
     // Get student's short-term programs (based on targeting)
     const shortTermResult = await pool.query(
-      'SELECT * FROM short_term_programs WHERE end_date > NOW() ORDER BY created_at DESC'
+      'SELECT * FROM short_term_programs ORDER BY created_at DESC'
     );
     
     // Filter short-term programs based on targeting
@@ -6507,7 +6507,7 @@ app.get('/api/discussions', async (req, res) => {
     // CRITICAL: Add short-term programs that student is eligible for
     try {
       const shortTermResult = await pool.query(
-        'SELECT * FROM short_term_programs WHERE end_date > NOW()'
+        'SELECT * FROM short_term_programs ORDER BY created_at DESC'
       );
       
       const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
@@ -7114,7 +7114,7 @@ app.get('/api/announcements', async (req, res) => {
     // Add short-term programs that student is eligible for
     try {
       const shortTermResult = await pool.query(
-        'SELECT * FROM short_term_programs WHERE end_date > NOW()'
+        'SELECT * FROM short_term_programs ORDER BY created_at DESC'
       );
       
       const eligibleShortTermPrograms = shortTermResult.rows.filter(program => {
@@ -7472,7 +7472,7 @@ app.get('/api/short-term-programs/student', async (req, res) => {
     
     // Get all active short-term programs
     const shortTermResult = await pool.query(
-      'SELECT * FROM short_term_programs WHERE end_date > NOW() ORDER BY created_at DESC'
+      'SELECT * FROM short_term_programs ORDER BY created_at DESC'
     );
     
     // Filter programs based on targeting
