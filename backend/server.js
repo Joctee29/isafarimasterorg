@@ -380,6 +380,54 @@ app.post('/api/assignment-submissions/upload', upload.single('file'), async (req
   }
 });
 
+// Discussion reply with file upload (MUST be before express.json()) - STORES IN DATABASE
+app.post('/api/discussion-replies/upload', upload.single('file'), async (req, res) => {
+  try {
+    console.log('=== DISCUSSION REPLY WITH FILE UPLOAD ===');
+    const { discussion_id, content, author, author_id, author_type } = req.body;
+    
+    if (!content && !req.file) {
+      return res.status(400).json({ success: false, error: 'Either content or file is required' });
+    }
+    
+    if (!discussion_id) {
+      return res.status(400).json({ success: false, error: 'Discussion ID is required' });
+    }
+    
+    let file_url = null, file_name = null, file_type = null, file_size = null;
+    
+    if (req.file) {
+      const uniqueFilename = Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(req.file.originalname);
+      
+      if (req.file.mimetype.startsWith('image/')) file_type = 'image';
+      else if (req.file.mimetype.startsWith('audio/')) file_type = 'audio';
+      else if (req.file.mimetype === 'application/pdf') file_type = 'pdf';
+      else file_type = 'file';
+      
+      await pool.query(
+        'INSERT INTO file_storage (file_name, original_name, file_data, file_mimetype, file_size, uploaded_by_id, uploaded_by_type) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+        [uniqueFilename, req.file.originalname, req.file.buffer, req.file.mimetype, req.file.size, author_id || null, author_type || 'student']
+      );
+      
+      file_url = '/content/' + uniqueFilename;
+      file_name = req.file.originalname;
+      file_size = req.file.size;
+    }
+    
+    const replyResult = await pool.query(
+      'INSERT INTO discussion_replies (discussion_id, content, author, author_id, author_type, file_url, file_name, file_type, file_size) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+      [discussion_id, content || '', author, author_id, author_type || 'student', file_url, file_name, file_type, file_size]
+    );
+    
+    await pool.query('UPDATE discussions SET replies = replies + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1', [discussion_id]);
+    
+    res.json({ success: true, data: replyResult.rows[0] });
+  } catch (error) {
+    console.error('Error creating discussion reply with file:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Now apply express.json() for other routes
 app.use(express.json());
 
@@ -982,6 +1030,18 @@ const initializeDatabase = async () => {
       )
     `);
 
+
+    // Add file columns to existing discussion_replies table
+    try {
+      await pool.query('ALTER TABLE discussion_replies ADD COLUMN IF NOT EXISTS file_url VARCHAR(500)');
+      await pool.query('ALTER TABLE discussion_replies ADD COLUMN IF NOT EXISTS file_name VARCHAR(255)');
+      await pool.query('ALTER TABLE discussion_replies ADD COLUMN IF NOT EXISTS file_type VARCHAR(50)');
+      await pool.query('ALTER TABLE discussion_replies ADD COLUMN IF NOT EXISTS file_size INTEGER');
+      await pool.query('ALTER TABLE discussion_replies ALTER COLUMN content DROP NOT NULL');
+      console.log('File columns added to discussion_replies table');
+    } catch (error) {
+      console.log('Discussion replies file columns may already exist:', error.message);
+    }
 
     // Create study_group_notifications table
     await pool.query(`
@@ -9459,7 +9519,7 @@ app.get('/api/progress/student/:student_id', async (req, res) => {
     const totalAssessments = parseInt(totalAssessmentsResult.rows[0].total) || 0;
     
     const submittedAssessmentsResult = await pool.query(
-      'SELECT COUNT(*) as submitted, AVG(COALESCE(score, 0)) as avg_score FROM assessment_submissions WHERE student_id = $1 AND program_name = $2',
+      'SELECT COUNT(*) as submitted, AVG(COALESCE(score, 0)) as avg_score FROM assessment_submissions WHERE student_id = $1 AND student_program = $2',
       [student_id, program_name]
     );
     const submittedAssessments = parseInt(submittedAssessmentsResult.rows[0].submitted) || 0;
@@ -9473,7 +9533,7 @@ app.get('/api/progress/student/:student_id', async (req, res) => {
     const totalAssignments = parseInt(totalAssignmentsResult.rows[0].total) || 0;
     
     const submittedAssignmentsResult = await pool.query(
-      'SELECT COUNT(*) as submitted, AVG(COALESCE(grade, 0)) as avg_grade FROM assignment_submissions WHERE student_id = $1 AND program_name = $2',
+      'SELECT COUNT(*) as submitted, AVG(COALESCE(points_awarded, 0)) as avg_grade FROM assignment_submissions WHERE student_id = $1 AND student_program = $2',
       [student_id, program_name]
     );
     const submittedAssignments = parseInt(submittedAssignmentsResult.rows[0].submitted) || 0;
@@ -9553,8 +9613,8 @@ app.get('/api/progress/students', async (req, res) => {
     
     const progressList = [];
     for (const student of students) {
-      const submittedAssessments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assessment_submissions WHERE student_id = $1 AND program_name = $2', [student.id, program_name])).rows[0].c) || 0;
-      const submittedAssignments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assignment_submissions WHERE student_id = $1 AND program_name = $2', [student.id, program_name])).rows[0].c) || 0;
+      const submittedAssessments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assessment_submissions WHERE student_id = $1 AND student_program = $2', [student.id, program_name])).rows[0].c) || 0;
+      const submittedAssignments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assignment_submissions WHERE student_id = $1 AND student_program = $2', [student.id, program_name])).rows[0].c) || 0;
       const attendedLiveClasses = parseInt((await pool.query('SELECT COUNT(DISTINCT class_id) as c FROM live_class_participants WHERE student_id = $1', [student.id])).rows[0].c) || 0;
       
       const assessmentParticipation = totalAssessments > 0 ? ((submittedAssessments / totalAssessments) * 100).toFixed(1) : '0.0';
@@ -9715,7 +9775,7 @@ app.get('/api/progress/student/:student_id', async (req, res) => {
     const totalAssessments = parseInt(totalAssessmentsResult.rows[0].total) || 0;
     
     const submittedAssessmentsResult = await pool.query(
-      'SELECT COUNT(*) as submitted, AVG(COALESCE(score, 0)) as avg_score FROM assessment_submissions WHERE student_id = $1 AND program_name = $2',
+      'SELECT COUNT(*) as submitted, AVG(COALESCE(score, 0)) as avg_score FROM assessment_submissions WHERE student_id = $1 AND student_program = $2',
       [student_id, program_name]
     );
     const submittedAssessments = parseInt(submittedAssessmentsResult.rows[0].submitted) || 0;
@@ -9729,7 +9789,7 @@ app.get('/api/progress/student/:student_id', async (req, res) => {
     const totalAssignments = parseInt(totalAssignmentsResult.rows[0].total) || 0;
     
     const submittedAssignmentsResult = await pool.query(
-      'SELECT COUNT(*) as submitted, AVG(COALESCE(grade, 0)) as avg_grade FROM assignment_submissions WHERE student_id = $1 AND program_name = $2',
+      'SELECT COUNT(*) as submitted, AVG(COALESCE(points_awarded, 0)) as avg_grade FROM assignment_submissions WHERE student_id = $1 AND student_program = $2',
       [student_id, program_name]
     );
     const submittedAssignments = parseInt(submittedAssignmentsResult.rows[0].submitted) || 0;
@@ -9809,8 +9869,8 @@ app.get('/api/progress/students', async (req, res) => {
     
     const progressList = [];
     for (const student of students) {
-      const submittedAssessments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assessment_submissions WHERE student_id = $1 AND program_name = $2', [student.id, program_name])).rows[0].c) || 0;
-      const submittedAssignments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assignment_submissions WHERE student_id = $1 AND program_name = $2', [student.id, program_name])).rows[0].c) || 0;
+      const submittedAssessments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assessment_submissions WHERE student_id = $1 AND student_program = $2', [student.id, program_name])).rows[0].c) || 0;
+      const submittedAssignments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assignment_submissions WHERE student_id = $1 AND student_program = $2', [student.id, program_name])).rows[0].c) || 0;
       const attendedLiveClasses = parseInt((await pool.query('SELECT COUNT(DISTINCT class_id) as c FROM live_class_participants WHERE student_id = $1', [student.id])).rows[0].c) || 0;
       
       const assessmentParticipation = totalAssessments > 0 ? ((submittedAssessments / totalAssessments) * 100).toFixed(1) : '0.0';
