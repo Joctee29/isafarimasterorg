@@ -6824,42 +6824,75 @@ app.get('/api/live-classes', async (req, res) => {
     console.log('=== STUDENT INFO FOR LIVE CLASSES ===');
     console.log('Student ID:', studentInfo.id);
     console.log('Student Name:', studentInfo.name);
+    console.log('Course ID:', studentInfo.course_id);
     console.log('Course Name:', studentInfo.course_name);
     console.log('Department Name:', studentInfo.department_name);
     console.log('College Name:', studentInfo.college_name);
     
-    // FIXED: If student has course_id but no department_name/college_name, try to look them up directly
-    if (studentInfo.course_id && (!studentInfo.department_name || !studentInfo.college_name)) {
-      console.log('⚠️ Student missing department/college info, attempting direct lookup...');
-      try {
-        const courseInfoResult = await pool.query(`
-          SELECT c.name as course_name, 
-                 d.name as department_name, d.id as department_id,
-                 col.name as college_name, col.id as college_id
-          FROM courses c
-          LEFT JOIN departments d ON c.department_id = d.id
-          LEFT JOIN colleges col ON d.college_id = col.id
-          WHERE c.id = $1
-        `, [studentInfo.course_id]);
-        
-        if (courseInfoResult.rows.length > 0) {
-          const courseInfo = courseInfoResult.rows[0];
-          if (!studentInfo.course_name && courseInfo.course_name) {
-            studentInfo.course_name = courseInfo.course_name;
-            console.log('   ✅ Found course_name:', courseInfo.course_name);
+    // CRITICAL FIX: ALWAYS try to look up department/college info if missing
+    // This handles cases where JOIN doesn't work due to NULL foreign keys
+    if (studentInfo.course_id) {
+      // First, get course info
+      if (!studentInfo.course_name) {
+        try {
+          const courseResult = await pool.query('SELECT name FROM courses WHERE id = $1', [studentInfo.course_id]);
+          if (courseResult.rows.length > 0) {
+            studentInfo.course_name = courseResult.rows[0].name;
+            console.log('   ✅ Found course_name via direct lookup:', studentInfo.course_name);
           }
-          if (!studentInfo.department_name && courseInfo.department_name) {
-            studentInfo.department_name = courseInfo.department_name;
-            console.log('   ✅ Found department_name:', courseInfo.department_name);
-          }
-          if (!studentInfo.college_name && courseInfo.college_name) {
-            studentInfo.college_name = courseInfo.college_name;
-            console.log('   ✅ Found college_name:', courseInfo.college_name);
-          }
-        }
-      } catch (lookupErr) {
-        console.log('Direct lookup failed:', lookupErr.message);
+        } catch (err) { console.log('Course lookup failed:', err.message); }
       }
+      
+      // Then, get department info via course
+      if (!studentInfo.department_name) {
+        try {
+          const deptResult = await pool.query(`
+            SELECT d.name as department_name, d.college_id
+            FROM courses c
+            JOIN departments d ON c.department_id = d.id
+            WHERE c.id = $1
+          `, [studentInfo.course_id]);
+          if (deptResult.rows.length > 0) {
+            studentInfo.department_name = deptResult.rows[0].department_name;
+            studentInfo._college_id = deptResult.rows[0].college_id; // Store for college lookup
+            console.log('   ✅ Found department_name via direct lookup:', studentInfo.department_name);
+          }
+        } catch (err) { console.log('Department lookup failed:', err.message); }
+      }
+      
+      // Finally, get college info via department
+      if (!studentInfo.college_name) {
+        try {
+          // Try via stored college_id first
+          if (studentInfo._college_id) {
+            const collegeResult = await pool.query('SELECT name FROM colleges WHERE id = $1', [studentInfo._college_id]);
+            if (collegeResult.rows.length > 0) {
+              studentInfo.college_name = collegeResult.rows[0].name;
+              console.log('   ✅ Found college_name via stored college_id:', studentInfo.college_name);
+            }
+          }
+          
+          // If still no college, try full chain lookup
+          if (!studentInfo.college_name) {
+            const collegeResult = await pool.query(`
+              SELECT col.name as college_name
+              FROM courses c
+              JOIN departments d ON c.department_id = d.id
+              JOIN colleges col ON d.college_id = col.id
+              WHERE c.id = $1
+            `, [studentInfo.course_id]);
+            if (collegeResult.rows.length > 0) {
+              studentInfo.college_name = collegeResult.rows[0].college_name;
+              console.log('   ✅ Found college_name via chain lookup:', studentInfo.college_name);
+            }
+          }
+        } catch (err) { console.log('College lookup failed:', err.message); }
+      }
+      
+      console.log('=== FINAL STUDENT INFO AFTER LOOKUPS ===');
+      console.log('Course Name:', studentInfo.course_name);
+      console.log('Department Name:', studentInfo.department_name);
+      console.log('College Name:', studentInfo.college_name);
     }
     
     // Get student's regular programs
@@ -7150,74 +7183,130 @@ app.get('/api/live-classes', async (req, res) => {
             console.log('   ✅ Student directly enrolled in short-term program');
             qualifies = true;
           }
+          // COURSES targeting - CRITICAL FIX: This is the most common case for short-term programs
+          else if (shortTermProgram.target_type === 'courses' || shortTermProgram.target_type === 'course') {
+            console.log('   🔍 Checking COURSES targeting...');
+            console.log('      Target Value:', shortTermProgram.target_value);
+            console.log('      Student Course:', studentInfo.course_name);
+            
+            // CRITICAL: For "courses" targeting, target_value contains course name(s)
+            // Match if student's course matches the target
+            if (studentInfo.course_name && shortTermProgram.target_value) {
+              const targetLower = shortTermProgram.target_value.toLowerCase().trim();
+              const courseLower = studentInfo.course_name.toLowerCase().trim();
+              
+              // Exact match
+              if (targetLower === courseLower) {
+                console.log('   ✅ COURSES targeting - Exact match');
+                qualifies = true;
+              }
+              // Partial match (either direction)
+              else if (targetLower.includes(courseLower) || courseLower.includes(targetLower)) {
+                console.log('   ✅ COURSES targeting - Partial match');
+                qualifies = true;
+              }
+              // Word-based matching
+              else {
+                const targetWords = targetLower.split(/\s+/).filter(w => w.length > 2);
+                const courseWords = courseLower.split(/\s+/).filter(w => w.length > 2);
+                const commonWords = targetWords.filter(word => courseWords.includes(word));
+                if (commonWords.length >= 1) {
+                  console.log('   ✅ COURSES targeting - Word match:', commonWords);
+                  qualifies = true;
+                }
+              }
+            }
+            
+            if (!qualifies) {
+              console.log('   ❌ COURSES targeting - No match');
+            }
+          }
           // College targeting - FIXED: Added partial match
           else if (shortTermProgram.target_type === 'college') {
-            if (studentInfo.college_name && 
-                (shortTermProgram.target_value === studentInfo.college_name ||
-                 shortTermProgram.target_value?.toLowerCase() === studentInfo.college_name?.toLowerCase() ||
-                 studentInfo.college_name.toLowerCase().includes(shortTermProgram.target_value?.toLowerCase()) ||
-                 shortTermProgram.target_value?.toLowerCase().includes(studentInfo.college_name?.toLowerCase()))) {
-              console.log('   ✅ Student college matches short-term program target');
-              qualifies = true;
+            console.log('   🔍 Checking COLLEGE targeting...');
+            if (studentInfo.college_name && shortTermProgram.target_value) {
+              const targetLower = shortTermProgram.target_value.toLowerCase().trim();
+              const collegeLower = studentInfo.college_name.toLowerCase().trim();
+              
+              if (targetLower === collegeLower || 
+                  collegeLower.includes(targetLower) || 
+                  targetLower.includes(collegeLower)) {
+                console.log('   ✅ Student college matches short-term program target');
+                qualifies = true;
+              }
+            }
+            if (!qualifies) {
+              console.log('   ❌ COLLEGE targeting - No match or missing data');
             }
           }
           // Department targeting - FIXED: Added partial match
           else if (shortTermProgram.target_type === 'department') {
-            if (studentInfo.department_name && 
-                (shortTermProgram.target_value === studentInfo.department_name ||
-                 shortTermProgram.target_value?.toLowerCase() === studentInfo.department_name?.toLowerCase() ||
-                 studentInfo.department_name.toLowerCase().includes(shortTermProgram.target_value?.toLowerCase()) ||
-                 shortTermProgram.target_value?.toLowerCase().includes(studentInfo.department_name?.toLowerCase()))) {
-              console.log('   ✅ Student department matches short-term program target');
-              qualifies = true;
+            console.log('   🔍 Checking DEPARTMENT targeting...');
+            if (studentInfo.department_name && shortTermProgram.target_value) {
+              const targetLower = shortTermProgram.target_value.toLowerCase().trim();
+              const deptLower = studentInfo.department_name.toLowerCase().trim();
+              
+              if (targetLower === deptLower || 
+                  deptLower.includes(targetLower) || 
+                  targetLower.includes(deptLower)) {
+                console.log('   ✅ Student department matches short-term program target');
+                qualifies = true;
+              }
             }
-          }
-          // Course targeting
-          else if (shortTermProgram.target_type === 'course') {
-            if (studentInfo.course_name && 
-                (shortTermProgram.target_value === studentInfo.course_name ||
-                 shortTermProgram.target_value?.toLowerCase() === studentInfo.course_name?.toLowerCase() ||
-                 studentInfo.course_name.toLowerCase().includes(shortTermProgram.target_value?.toLowerCase()) ||
-                 shortTermProgram.target_value?.toLowerCase().includes(studentInfo.course_name?.toLowerCase()))) {
-              console.log('   ✅ Student course matches short-term program target');
-              qualifies = true;
+            if (!qualifies) {
+              console.log('   ❌ DEPARTMENT targeting - No match or missing data');
             }
           }
           // Year targeting
           else if (shortTermProgram.target_type === 'year') {
+            console.log('   🔍 Checking YEAR targeting...');
             if (String(shortTermProgram.target_value) === String(studentInfo.year_of_study)) {
               console.log('   ✅ Student year matches short-term program target');
               qualifies = true;
+            } else {
+              console.log('   ❌ YEAR targeting - No match');
             }
           }
           // Program targeting - match by course name or regular programs
           else if (shortTermProgram.target_type === 'program') {
+            console.log('   🔍 Checking PROGRAM targeting...');
             // First check if target_value matches student's course name
-            if (studentInfo.course_name && 
-                (shortTermProgram.target_value === studentInfo.course_name ||
-                 shortTermProgram.target_value?.toLowerCase() === studentInfo.course_name?.toLowerCase() ||
-                 studentInfo.course_name.toLowerCase().includes(shortTermProgram.target_value?.toLowerCase()) ||
-                 shortTermProgram.target_value?.toLowerCase().includes(studentInfo.course_name?.toLowerCase()))) {
-              console.log('   ✅ Student course matches short-term program target (program type)');
-              qualifies = true;
+            if (studentInfo.course_name && shortTermProgram.target_value) {
+              const targetLower = shortTermProgram.target_value.toLowerCase().trim();
+              const courseLower = studentInfo.course_name.toLowerCase().trim();
+              
+              if (targetLower === courseLower || 
+                  courseLower.includes(targetLower) || 
+                  targetLower.includes(courseLower)) {
+                console.log('   ✅ Student course matches short-term program target (program type)');
+                qualifies = true;
+              }
             }
             // Also check regular programs
-            else {
-              const programTargetMatch = studentPrograms.some(p => 
-                p === shortTermProgram.target_value ||
-                p?.toLowerCase().includes(shortTermProgram.target_value?.toLowerCase()) ||
-                shortTermProgram.target_value?.toLowerCase().includes(p?.toLowerCase())
-              );
+            if (!qualifies) {
+              const programTargetMatch = studentPrograms.some(p => {
+                if (!p || !shortTermProgram.target_value) return false;
+                const pLower = p.toLowerCase().trim();
+                const targetLower = shortTermProgram.target_value.toLowerCase().trim();
+                return pLower === targetLower || 
+                       pLower.includes(targetLower) || 
+                       targetLower.includes(pLower);
+              });
               if (programTargetMatch) {
                 console.log('   ✅ Student program matches short-term program target');
                 qualifies = true;
               }
+            }
+            if (!qualifies) {
+              console.log('   ❌ PROGRAM targeting - No match');
             }
           }
           
           if (qualifies) {
             console.log(`✅ Live Class "${liveClass.title}" - Short-term program targeting match`);
             return true;
+          } else {
+            console.log(`❌ Live Class "${liveClass.title}" - Student does NOT qualify for this short-term program`);
           }
         } else {
           // Short-term program not found by flexible matching - try direct exact match
