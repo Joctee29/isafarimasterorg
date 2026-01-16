@@ -15,6 +15,7 @@ import { AssessmentResults } from "@/pages/AssessmentResults";
 import { Assignments } from "@/pages/NewAssignments";
 import { Discussions } from "@/pages/Discussions";
 import { Announcements } from "@/pages/Announcements";
+import { ProgressTracker } from "@/pages/ProgressTracker";
 import MySchedule from "@/pages/MySchedule";
 import { JedaNetworksCredit } from "@/components/JedaNetworksCredit";
 import LoginPage from "@/pages/LoginPage";
@@ -277,6 +278,8 @@ const Index = () => {
             <AssessmentResults />
           </div>
         );
+      case "progress-tracker":
+        return <ProgressTracker />;
       default:
         return <Dashboard />;
     }

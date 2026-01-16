@@ -516,22 +516,38 @@ export const Discussions = () => {
     const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
     
     try {
-      // Create FormData for file upload
-      const formData = new FormData();
-      formData.append('discussion_id', selectedDiscussion.id);
-      formData.append('content', newReply);
-      formData.append('author', currentUser.username || 'Anonymous');
-      formData.append('author_id', currentUser.id || '');
-      formData.append('author_type', 'student');
+      let response;
       
       if (selectedFile) {
+        // Use file upload endpoint with FormData
+        const formData = new FormData();
+        formData.append('discussion_id', selectedDiscussion.id);
+        formData.append('content', newReply);
+        formData.append('author', currentUser.username || 'Anonymous');
+        formData.append('author_id', currentUser.id || '');
+        formData.append('author_type', 'student');
         formData.append('file', selectedFile);
+        
+        response = await fetch('https://must-lms-backend.onrender.com/api/discussion-replies/upload', {
+          method: 'POST',
+          body: formData // Don't set Content-Type header - browser will set it with boundary
+        });
+      } else {
+        // Use JSON endpoint for text-only replies
+        response = await fetch('https://must-lms-backend.onrender.com/api/discussion-replies', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            discussion_id: selectedDiscussion.id,
+            content: newReply,
+            author: currentUser.username || 'Anonymous',
+            author_id: currentUser.id || null,
+            author_type: 'student'
+          })
+        });
       }
-      
-      const response = await fetch('https://must-lms-backend.onrender.com/api/discussion-replies', {
-        method: 'POST',
-        body: formData // Don't set Content-Type header - browser will set it with boundary
-      });
       
       if (response.ok) {
         const result = await response.json();
@@ -545,9 +561,13 @@ export const Discussions = () => {
             ? { ...d, replies: d.replies + 1 }
             : d
         ));
+      } else {
+        const errorResult = await response.json();
+        alert(errorResult.error || 'Failed to add reply');
       }
     } catch (error) {
       console.error('Error adding reply:', error);
+      alert('Failed to add reply. Please check your connection.');
     }
   };
   

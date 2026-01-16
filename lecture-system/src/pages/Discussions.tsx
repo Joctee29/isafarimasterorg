@@ -165,23 +165,38 @@ export const Discussions = () => {
       // Get current lecturer info
       const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
       
-      // Create FormData for file upload
-      const formData = new FormData();
-      formData.append('discussion_id', selectedDiscussion.id);
-      formData.append('content', replyContent);
-      formData.append('author', currentUser.username || 'Lecturer');
-      formData.append('author_id', currentUser.id || '');
-      formData.append('author_type', 'lecturer');
+      let response;
       
       if (selectedFile) {
+        // Use file upload endpoint with FormData
+        const formData = new FormData();
+        formData.append('discussion_id', selectedDiscussion.id);
+        formData.append('content', replyContent);
+        formData.append('author', currentUser.username || 'Lecturer');
+        formData.append('author_id', currentUser.id || '');
+        formData.append('author_type', 'lecturer');
         formData.append('file', selectedFile);
+        
+        response = await fetch('https://must-lms-backend.onrender.com/api/discussion-replies/upload', {
+          method: 'POST',
+          body: formData // Don't set Content-Type header - browser will set it with boundary
+        });
+      } else {
+        // Use JSON endpoint for text-only replies
+        response = await fetch('https://must-lms-backend.onrender.com/api/discussion-replies', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            discussion_id: selectedDiscussion.id,
+            content: replyContent,
+            author: currentUser.username || 'Lecturer',
+            author_id: currentUser.id || null,
+            author_type: 'lecturer'
+          })
+        });
       }
-      
-      // Save reply to database
-      const response = await fetch('https://must-lms-backend.onrender.com/api/discussion-replies', {
-        method: 'POST',
-        body: formData // Don't set Content-Type header - browser will set it with boundary
-      });
       
       if (response.ok) {
         // Update discussion reply count
@@ -197,7 +212,8 @@ export const Discussions = () => {
         setShowReplyForm(false);
         setSelectedDiscussion(null);
       } else {
-        alert('Failed to send reply. Please check your connection.');
+        const errorResult = await response.json();
+        alert(errorResult.error || 'Failed to send reply. Please check your connection.');
       }
     } catch (error) {
       console.error('Error sending reply:', error);

@@ -14,6 +14,7 @@ import { Reports } from "@/pages/Reports";
 import { Settings } from "@/pages/Settings";
 import { AnnouncementManagement } from "@/pages/AnnouncementManagement";
 import { ShortTermPrograms } from "@/pages/ShortTermPrograms";
+import { ProgressTracker } from "@/pages/ProgressTracker";
 import TimetableManagement from "@/pages/TimetableManagement";
 import { BulkUpload } from "@/pages/BulkUpload";
 import { ClassRepresentativeManagement } from "@/pages/ClassRepresentativeManagement";
@@ -36,6 +37,8 @@ const Index = () => {
         return <CourseManagement />;
       case "class-representatives":
         return <ClassRepresentativeManagement />;
+      case "progress-tracker":
+        return <ProgressTracker />;
       case "reports":
         return <Reports />;
       case "system":

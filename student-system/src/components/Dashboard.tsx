@@ -365,6 +365,12 @@ export const Dashboard = () => {
             <CardTitle className="flex items-center text-blue-800">
               <GraduationCap className="mr-2 h-5 w-5" />
               Current Course Information
+              {studentData.is_cr && (
+                <Badge className="ml-3 bg-green-600 text-white">
+                  <Award className="h-3 w-3 mr-1" />
+                  Class Representative
+                </Badge>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -385,6 +391,21 @@ export const Dashboard = () => {
                 <p className="text-xs text-muted-foreground">{studentData.department_name || studentData.department || "Department of Computer Science"}</p>
               </div>
             </div>
+            
+            {/* CR Status Banner */}
+            {studentData.is_cr && (
+              <div className="mt-4 p-3 bg-green-100 border border-green-300 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Award className="h-5 w-5 text-green-700" />
+                  <div>
+                    <p className="font-semibold text-green-800">You are the Class Representative</p>
+                    <p className="text-sm text-green-700">
+                      You can create General Discussions for your course. Your classmates can reach you for course-related matters.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
