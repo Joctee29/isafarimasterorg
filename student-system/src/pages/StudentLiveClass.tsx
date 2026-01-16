@@ -43,35 +43,46 @@ export const StudentLiveClass = ({ classId, onLeaveClass }: LiveClassViewerProps
       setLoading(true);
       const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
       
+      console.log('=== FETCHING LIVE CLASSES FOR STUDENT ===');
+      console.log('Current User:', currentUser);
+      console.log('Username:', currentUser.username);
+      
       // Get student info
       const studentResponse = await fetch(`https://must-lms-backend.onrender.com/api/students/me?username=${encodeURIComponent(currentUser.username)}`);
       const studentsResult = await studentResponse.json();
       
+      console.log('Student API Response:', studentsResult);
+      
       const currentStudent = studentsResult.data;
       
       if (!currentStudent) {
-        console.error('Student not found');
+        console.error('Student not found for username:', currentUser.username);
         setLoading(false);
         return;
       }
       
+      console.log('Student Found:', currentStudent.name);
+      console.log('Student Course:', currentStudent.course_name);
+      console.log('Student Department:', currentStudent.department_name);
+      console.log('Student College:', currentStudent.college_name);
+      
       // FIXED: Use backend filtering with student_username parameter
       // Backend will handle both regular programs AND short-term programs filtering
-      const liveClassResponse = await fetch(`https://must-lms-backend.onrender.com/api/live-classes?student_username=${encodeURIComponent(currentUser.username)}`);
+      const liveClassUrl = `https://must-lms-backend.onrender.com/api/live-classes?student_username=${encodeURIComponent(currentUser.username)}`;
+      
+      console.log('Fetching live classes from:', liveClassUrl);
+      
+      const liveClassResponse = await fetch(liveClassUrl);
       const liveClassResult = await liveClassResponse.json();
       
-      console.log('=== LIVE CLASS FILTERING DEBUG ===');
-      console.log('Current Student:', currentStudent);
-      console.log('Student Course:', currentStudent.course_name);
-      console.log('Live Classes from Backend (already filtered):', liveClassResult.data?.length || 0);
+      console.log('Live Classes API Response:', liveClassResult);
       
-      // Backend already filters by student's programs (regular + short-term)
-      // No need for frontend filtering - backend handles everything
+      // Get the filtered classes from backend (includes both regular and short-term programs)
       const studentClasses = liveClassResult.data || [];
       
       console.log('\n=== FINAL CLASSES ===');
       console.log('Total Classes:', studentClasses.length);
-      console.log('Classes:', studentClasses.map(c => `${c.title} (${c.program_name})`));
+      console.log('Classes:', studentClasses.map((c: any) => `${c.title} (${c.program_name})`));
       
       setLiveClasses(studentClasses);
       setLoading(false);
