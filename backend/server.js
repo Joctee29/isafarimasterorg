@@ -9432,6 +9432,227 @@ app.post('/api/lecturers/bulk-upload', async (req, res) => {
   }
 });
 
+
+// ============================================
+// PROGRESS TRACKER API ENDPOINTS
+// ============================================
+
+// Get student progress for a specific program
+app.get('/api/progress/student/:student_id', async (req, res) => {
+  try {
+    const { student_id } = req.params;
+    const { program_name, lecturer_id } = req.query;
+    
+    console.log('=== FETCHING STUDENT PROGRESS ===');
+    
+    const studentResult = await pool.query('SELECT * FROM students WHERE id = $1', [student_id]);
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Student not found' });
+    }
+    const student = studentResult.rows[0];
+    
+    let assessmentQuery = 'SELECT COUNT(*) as total FROM assessments WHERE program_name = $1';
+    let assessmentParams = [program_name];
+    if (lecturer_id) { assessmentQuery += ' AND lecturer_id = $2'; assessmentParams.push(lecturer_id); }
+    
+    const totalAssessmentsResult = await pool.query(assessmentQuery, assessmentParams);
+    const totalAssessments = parseInt(totalAssessmentsResult.rows[0].total) || 0;
+    
+    const submittedAssessmentsResult = await pool.query(
+      'SELECT COUNT(*) as submitted, AVG(COALESCE(score, 0)) as avg_score FROM assessment_submissions WHERE student_id = $1 AND program_name = $2',
+      [student_id, program_name]
+    );
+    const submittedAssessments = parseInt(submittedAssessmentsResult.rows[0].submitted) || 0;
+    const avgAssessmentScore = parseFloat(submittedAssessmentsResult.rows[0].avg_score) || 0;
+    
+    let assignmentQuery = 'SELECT COUNT(*) as total FROM assignments WHERE program_name = $1';
+    let assignmentParams = [program_name];
+    if (lecturer_id) { assignmentQuery += ' AND lecturer_id = $2'; assignmentParams.push(lecturer_id); }
+    
+    const totalAssignmentsResult = await pool.query(assignmentQuery, assignmentParams);
+    const totalAssignments = parseInt(totalAssignmentsResult.rows[0].total) || 0;
+    
+    const submittedAssignmentsResult = await pool.query(
+      'SELECT COUNT(*) as submitted, AVG(COALESCE(grade, 0)) as avg_grade FROM assignment_submissions WHERE student_id = $1 AND program_name = $2',
+      [student_id, program_name]
+    );
+    const submittedAssignments = parseInt(submittedAssignmentsResult.rows[0].submitted) || 0;
+    const avgAssignmentGrade = parseFloat(submittedAssignmentsResult.rows[0].avg_grade) || 0;
+    
+    let liveClassQuery = 'SELECT COUNT(*) as total FROM live_classes WHERE program_name = $1';
+    let liveClassParams = [program_name];
+    if (lecturer_id) { liveClassQuery += ' AND lecturer_id = $2'; liveClassParams.push(lecturer_id); }
+    
+    const totalLiveClassesResult = await pool.query(liveClassQuery, liveClassParams);
+    const totalLiveClasses = parseInt(totalLiveClassesResult.rows[0].total) || 0;
+    
+    const attendedLiveClassesResult = await pool.query(
+      'SELECT COUNT(DISTINCT class_id) as attended FROM live_class_participants WHERE student_id = $1',
+      [student_id]
+    );
+    const attendedLiveClasses = parseInt(attendedLiveClassesResult.rows[0].attended) || 0;
+    
+    const assessmentParticipation = totalAssessments > 0 ? ((submittedAssessments / totalAssessments) * 100).toFixed(1) : '0.0';
+    const assignmentParticipation = totalAssignments > 0 ? ((submittedAssignments / totalAssignments) * 100).toFixed(1) : '0.0';
+    const liveClassParticipation = totalLiveClasses > 0 ? ((attendedLiveClasses / totalLiveClasses) * 100).toFixed(1) : '0.0';
+    
+    const overallParticipation = ((parseFloat(assessmentParticipation) + parseFloat(assignmentParticipation) + parseFloat(liveClassParticipation)) / 3).toFixed(1);
+    
+    let performanceLevel = 'Needs Improvement';
+    if (parseFloat(overallParticipation) >= 80) performanceLevel = 'Excellent';
+    else if (parseFloat(overallParticipation) >= 60) performanceLevel = 'Good';
+    else if (parseFloat(overallParticipation) >= 40) performanceLevel = 'Average';
+    
+    res.json({ success: true, data: {
+      student: { id: student.id, name: student.name, registration_number: student.registration_number, email: student.email },
+      program: program_name,
+      assessments: { total: totalAssessments, submitted: submittedAssessments, not_submitted: totalAssessments - submittedAssessments, average_score: avgAssessmentScore.toFixed(1), participation_rate: assessmentParticipation },
+      assignments: { total: totalAssignments, submitted: submittedAssignments, not_submitted: totalAssignments - submittedAssignments, average_grade: avgAssignmentGrade.toFixed(1), participation_rate: assignmentParticipation },
+      live_classes: { total: totalLiveClasses, attended: attendedLiveClasses, not_attended: totalLiveClasses - attendedLiveClasses, attendance_rate: liveClassParticipation },
+      overall: { participation_rate: overallParticipation, performance_level: performanceLevel }
+    }});
+  } catch (error) {
+    console.error('Error fetching student progress:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get all students progress for a program
+app.get('/api/progress/students', async (req, res) => {
+  try {
+    const { program_name, lecturer_id } = req.query;
+    if (!program_name) return res.status(400).json({ success: false, error: 'Program name is required' });
+    
+    let students = [];
+    const enrolledStudentsResult = await pool.query(
+      'SELECT DISTINCT s.id, s.name, s.registration_number, s.email FROM students s JOIN enrollments e ON s.id = e.student_id JOIN programs p ON e.program_id = p.id WHERE p.name = $1 ORDER BY s.name',
+      [program_name]
+    );
+    students = enrolledStudentsResult.rows;
+    
+    if (students.length === 0) {
+      const directStudentsResult = await pool.query('SELECT DISTINCT id, name, registration_number, email FROM students WHERE program_name = $1 ORDER BY name', [program_name]);
+      students = directStudentsResult.rows;
+    }
+    
+    let assessmentQuery = 'SELECT COUNT(*) as total FROM assessments WHERE program_name = $1';
+    let assignmentQuery = 'SELECT COUNT(*) as total FROM assignments WHERE program_name = $1';
+    let liveClassQuery = 'SELECT COUNT(*) as total FROM live_classes WHERE program_name = $1';
+    let queryParams = [program_name];
+    
+    if (lecturer_id) {
+      assessmentQuery += ' AND lecturer_id = $2';
+      assignmentQuery += ' AND lecturer_id = $2';
+      liveClassQuery += ' AND lecturer_id = $2';
+      queryParams.push(lecturer_id);
+    }
+    
+    const totalAssessments = parseInt((await pool.query(assessmentQuery, queryParams)).rows[0].total) || 0;
+    const totalAssignments = parseInt((await pool.query(assignmentQuery, queryParams)).rows[0].total) || 0;
+    const totalLiveClasses = parseInt((await pool.query(liveClassQuery, queryParams)).rows[0].total) || 0;
+    
+    const progressList = [];
+    for (const student of students) {
+      const submittedAssessments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assessment_submissions WHERE student_id = $1 AND program_name = $2', [student.id, program_name])).rows[0].c) || 0;
+      const submittedAssignments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assignment_submissions WHERE student_id = $1 AND program_name = $2', [student.id, program_name])).rows[0].c) || 0;
+      const attendedLiveClasses = parseInt((await pool.query('SELECT COUNT(DISTINCT class_id) as c FROM live_class_participants WHERE student_id = $1', [student.id])).rows[0].c) || 0;
+      
+      const assessmentParticipation = totalAssessments > 0 ? ((submittedAssessments / totalAssessments) * 100).toFixed(1) : '0.0';
+      const assignmentParticipation = totalAssignments > 0 ? ((submittedAssignments / totalAssignments) * 100).toFixed(1) : '0.0';
+      const liveClassParticipation = totalLiveClasses > 0 ? ((attendedLiveClasses / totalLiveClasses) * 100).toFixed(1) : '0.0';
+      const overallParticipation = ((parseFloat(assessmentParticipation) + parseFloat(assignmentParticipation) + parseFloat(liveClassParticipation)) / 3).toFixed(1);
+      
+      let performanceLevel = 'Needs Improvement';
+      if (parseFloat(overallParticipation) >= 80) performanceLevel = 'Excellent';
+      else if (parseFloat(overallParticipation) >= 60) performanceLevel = 'Good';
+      else if (parseFloat(overallParticipation) >= 40) performanceLevel = 'Average';
+      
+      progressList.push({
+        student: { id: student.id, name: student.name, registration_number: student.registration_number },
+        assessments: { total: totalAssessments, submitted: submittedAssessments, participation_rate: assessmentParticipation },
+        assignments: { total: totalAssignments, submitted: submittedAssignments, participation_rate: assignmentParticipation },
+        live_classes: { total: totalLiveClasses, attended: attendedLiveClasses, attendance_rate: liveClassParticipation },
+        overall: { participation_rate: overallParticipation, performance_level: performanceLevel }
+      });
+    }
+    res.json({ success: true, data: progressList });
+  } catch (error) {
+    console.error('Error fetching students progress:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get lecturer progress (for Admin)
+app.get('/api/progress/lecturer/:lecturer_id', async (req, res) => {
+  try {
+    const { lecturer_id } = req.params;
+    const lecturerResult = await pool.query('SELECT * FROM lecturers WHERE id = $1', [lecturer_id]);
+    if (lecturerResult.rows.length === 0) return res.status(404).json({ success: false, error: 'Lecturer not found' });
+    const lecturer = lecturerResult.rows[0];
+    
+    const totalPrograms = parseInt((await pool.query('SELECT COUNT(*) as c FROM programs WHERE lecturer_id = $1', [lecturer_id])).rows[0].c) || 0;
+    const assessmentStats = (await pool.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status IN ('active','published') THEN 1 END) as active, COUNT(CASE WHEN status IN ('completed','expired') THEN 1 END) as completed FROM assessments WHERE lecturer_id = $1", [lecturer_id])).rows[0];
+    const assignmentStats = (await pool.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status IN ('active','open') THEN 1 END) as active, COUNT(CASE WHEN status IN ('completed','closed') THEN 1 END) as completed FROM assignments WHERE lecturer_id = $1", [lecturer_id])).rows[0];
+    const liveClassStats = (await pool.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status IN ('live','scheduled') THEN 1 END) as active, COUNT(CASE WHEN status IN ('ended','completed') THEN 1 END) as completed FROM live_classes WHERE lecturer_id = $1", [lecturer_id])).rows[0];
+    const contentCount = parseInt((await pool.query('SELECT COUNT(*) as c FROM course_content WHERE lecturer_id = $1', [lecturer_id])).rows[0].c) || 0;
+    const announcementCount = parseInt((await pool.query("SELECT COUNT(*) as c FROM announcements WHERE created_by_id = $1 AND created_by_type = 'lecturer'", [lecturer_id])).rows[0].c) || 0;
+    const totalStudents = parseInt((await pool.query('SELECT COUNT(DISTINCT e.student_id) as c FROM enrollments e JOIN programs p ON e.program_id = p.id WHERE p.lecturer_id = $1', [lecturer_id])).rows[0].c) || 0;
+    
+    const totalActivities = parseInt(assessmentStats.total) + parseInt(assignmentStats.total) + parseInt(liveClassStats.total) + contentCount + announcementCount;
+    let activityLevel = 'Low';
+    if (totalActivities >= 30) activityLevel = 'Very Active';
+    else if (totalActivities >= 15) activityLevel = 'Active';
+    else if (totalActivities >= 5) activityLevel = 'Moderate';
+    
+    res.json({ success: true, data: {
+      lecturer: { id: lecturer.id, name: lecturer.name, email: lecturer.email, specialization: lecturer.specialization, employee_id: lecturer.employee_id },
+      programs: { total: totalPrograms },
+      students: { total: totalStudents },
+      assessments: { total_created: parseInt(assessmentStats.total), active: parseInt(assessmentStats.active), completed: parseInt(assessmentStats.completed) },
+      assignments: { total_created: parseInt(assignmentStats.total), active: parseInt(assignmentStats.active), completed: parseInt(assignmentStats.completed) },
+      live_classes: { total_created: parseInt(liveClassStats.total), active: parseInt(liveClassStats.active), completed: parseInt(liveClassStats.completed) },
+      content: { total_created: contentCount },
+      announcements: { total_created: announcementCount },
+      overall: { total_activities: totalActivities, activity_level: activityLevel }
+    }});
+  } catch (error) {
+    console.error('Error fetching lecturer progress:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get all lecturers progress (for Admin list)
+app.get('/api/progress/lecturers', async (req, res) => {
+  try {
+    const lecturers = (await pool.query('SELECT id, name, email, specialization, employee_id, is_active FROM lecturers ORDER BY name')).rows;
+    const progressList = [];
+    
+    for (const lecturer of lecturers) {
+      const assessments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assessments WHERE lecturer_id = $1', [lecturer.id])).rows[0].c) || 0;
+      const assignments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assignments WHERE lecturer_id = $1', [lecturer.id])).rows[0].c) || 0;
+      const liveClasses = parseInt((await pool.query('SELECT COUNT(*) as c FROM live_classes WHERE lecturer_id = $1', [lecturer.id])).rows[0].c) || 0;
+      const programs = parseInt((await pool.query('SELECT COUNT(*) as c FROM programs WHERE lecturer_id = $1', [lecturer.id])).rows[0].c) || 0;
+      
+      const totalActivities = assessments + assignments + liveClasses;
+      let activityLevel = 'Low';
+      if (totalActivities >= 30) activityLevel = 'Very Active';
+      else if (totalActivities >= 15) activityLevel = 'Active';
+      else if (totalActivities >= 5) activityLevel = 'Moderate';
+      
+      progressList.push({
+        lecturer: { id: lecturer.id, name: lecturer.name, email: lecturer.email, specialization: lecturer.specialization, employee_id: lecturer.employee_id, is_active: lecturer.is_active },
+        stats: { programs, assessments, assignments, live_classes: liveClasses, total_activities: totalActivities },
+        overall: { activity_level: activityLevel }
+      });
+    }
+    res.json({ success: true, data: progressList });
+  } catch (error) {
+    console.error('Error fetching lecturers progress:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
 const PORT = process.env.PORT || 5000;
 
 // Start server
@@ -9467,7 +9688,228 @@ const server = app.listen(PORT, () => {
       console.log('🚀 Server is ready to accept requests');
     
     // Start the server
-    const PORT = process.env.PORT || 5000;
+    
+// ============================================
+// PROGRESS TRACKER API ENDPOINTS
+// ============================================
+
+// Get student progress for a specific program
+app.get('/api/progress/student/:student_id', async (req, res) => {
+  try {
+    const { student_id } = req.params;
+    const { program_name, lecturer_id } = req.query;
+    
+    console.log('=== FETCHING STUDENT PROGRESS ===');
+    
+    const studentResult = await pool.query('SELECT * FROM students WHERE id = $1', [student_id]);
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Student not found' });
+    }
+    const student = studentResult.rows[0];
+    
+    let assessmentQuery = 'SELECT COUNT(*) as total FROM assessments WHERE program_name = $1';
+    let assessmentParams = [program_name];
+    if (lecturer_id) { assessmentQuery += ' AND lecturer_id = $2'; assessmentParams.push(lecturer_id); }
+    
+    const totalAssessmentsResult = await pool.query(assessmentQuery, assessmentParams);
+    const totalAssessments = parseInt(totalAssessmentsResult.rows[0].total) || 0;
+    
+    const submittedAssessmentsResult = await pool.query(
+      'SELECT COUNT(*) as submitted, AVG(COALESCE(score, 0)) as avg_score FROM assessment_submissions WHERE student_id = $1 AND program_name = $2',
+      [student_id, program_name]
+    );
+    const submittedAssessments = parseInt(submittedAssessmentsResult.rows[0].submitted) || 0;
+    const avgAssessmentScore = parseFloat(submittedAssessmentsResult.rows[0].avg_score) || 0;
+    
+    let assignmentQuery = 'SELECT COUNT(*) as total FROM assignments WHERE program_name = $1';
+    let assignmentParams = [program_name];
+    if (lecturer_id) { assignmentQuery += ' AND lecturer_id = $2'; assignmentParams.push(lecturer_id); }
+    
+    const totalAssignmentsResult = await pool.query(assignmentQuery, assignmentParams);
+    const totalAssignments = parseInt(totalAssignmentsResult.rows[0].total) || 0;
+    
+    const submittedAssignmentsResult = await pool.query(
+      'SELECT COUNT(*) as submitted, AVG(COALESCE(grade, 0)) as avg_grade FROM assignment_submissions WHERE student_id = $1 AND program_name = $2',
+      [student_id, program_name]
+    );
+    const submittedAssignments = parseInt(submittedAssignmentsResult.rows[0].submitted) || 0;
+    const avgAssignmentGrade = parseFloat(submittedAssignmentsResult.rows[0].avg_grade) || 0;
+    
+    let liveClassQuery = 'SELECT COUNT(*) as total FROM live_classes WHERE program_name = $1';
+    let liveClassParams = [program_name];
+    if (lecturer_id) { liveClassQuery += ' AND lecturer_id = $2'; liveClassParams.push(lecturer_id); }
+    
+    const totalLiveClassesResult = await pool.query(liveClassQuery, liveClassParams);
+    const totalLiveClasses = parseInt(totalLiveClassesResult.rows[0].total) || 0;
+    
+    const attendedLiveClassesResult = await pool.query(
+      'SELECT COUNT(DISTINCT class_id) as attended FROM live_class_participants WHERE student_id = $1',
+      [student_id]
+    );
+    const attendedLiveClasses = parseInt(attendedLiveClassesResult.rows[0].attended) || 0;
+    
+    const assessmentParticipation = totalAssessments > 0 ? ((submittedAssessments / totalAssessments) * 100).toFixed(1) : '0.0';
+    const assignmentParticipation = totalAssignments > 0 ? ((submittedAssignments / totalAssignments) * 100).toFixed(1) : '0.0';
+    const liveClassParticipation = totalLiveClasses > 0 ? ((attendedLiveClasses / totalLiveClasses) * 100).toFixed(1) : '0.0';
+    
+    const overallParticipation = ((parseFloat(assessmentParticipation) + parseFloat(assignmentParticipation) + parseFloat(liveClassParticipation)) / 3).toFixed(1);
+    
+    let performanceLevel = 'Needs Improvement';
+    if (parseFloat(overallParticipation) >= 80) performanceLevel = 'Excellent';
+    else if (parseFloat(overallParticipation) >= 60) performanceLevel = 'Good';
+    else if (parseFloat(overallParticipation) >= 40) performanceLevel = 'Average';
+    
+    res.json({ success: true, data: {
+      student: { id: student.id, name: student.name, registration_number: student.registration_number, email: student.email },
+      program: program_name,
+      assessments: { total: totalAssessments, submitted: submittedAssessments, not_submitted: totalAssessments - submittedAssessments, average_score: avgAssessmentScore.toFixed(1), participation_rate: assessmentParticipation },
+      assignments: { total: totalAssignments, submitted: submittedAssignments, not_submitted: totalAssignments - submittedAssignments, average_grade: avgAssignmentGrade.toFixed(1), participation_rate: assignmentParticipation },
+      live_classes: { total: totalLiveClasses, attended: attendedLiveClasses, not_attended: totalLiveClasses - attendedLiveClasses, attendance_rate: liveClassParticipation },
+      overall: { participation_rate: overallParticipation, performance_level: performanceLevel }
+    }});
+  } catch (error) {
+    console.error('Error fetching student progress:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get all students progress for a program
+app.get('/api/progress/students', async (req, res) => {
+  try {
+    const { program_name, lecturer_id } = req.query;
+    if (!program_name) return res.status(400).json({ success: false, error: 'Program name is required' });
+    
+    let students = [];
+    const enrolledStudentsResult = await pool.query(
+      'SELECT DISTINCT s.id, s.name, s.registration_number, s.email FROM students s JOIN enrollments e ON s.id = e.student_id JOIN programs p ON e.program_id = p.id WHERE p.name = $1 ORDER BY s.name',
+      [program_name]
+    );
+    students = enrolledStudentsResult.rows;
+    
+    if (students.length === 0) {
+      const directStudentsResult = await pool.query('SELECT DISTINCT id, name, registration_number, email FROM students WHERE program_name = $1 ORDER BY name', [program_name]);
+      students = directStudentsResult.rows;
+    }
+    
+    let assessmentQuery = 'SELECT COUNT(*) as total FROM assessments WHERE program_name = $1';
+    let assignmentQuery = 'SELECT COUNT(*) as total FROM assignments WHERE program_name = $1';
+    let liveClassQuery = 'SELECT COUNT(*) as total FROM live_classes WHERE program_name = $1';
+    let queryParams = [program_name];
+    
+    if (lecturer_id) {
+      assessmentQuery += ' AND lecturer_id = $2';
+      assignmentQuery += ' AND lecturer_id = $2';
+      liveClassQuery += ' AND lecturer_id = $2';
+      queryParams.push(lecturer_id);
+    }
+    
+    const totalAssessments = parseInt((await pool.query(assessmentQuery, queryParams)).rows[0].total) || 0;
+    const totalAssignments = parseInt((await pool.query(assignmentQuery, queryParams)).rows[0].total) || 0;
+    const totalLiveClasses = parseInt((await pool.query(liveClassQuery, queryParams)).rows[0].total) || 0;
+    
+    const progressList = [];
+    for (const student of students) {
+      const submittedAssessments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assessment_submissions WHERE student_id = $1 AND program_name = $2', [student.id, program_name])).rows[0].c) || 0;
+      const submittedAssignments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assignment_submissions WHERE student_id = $1 AND program_name = $2', [student.id, program_name])).rows[0].c) || 0;
+      const attendedLiveClasses = parseInt((await pool.query('SELECT COUNT(DISTINCT class_id) as c FROM live_class_participants WHERE student_id = $1', [student.id])).rows[0].c) || 0;
+      
+      const assessmentParticipation = totalAssessments > 0 ? ((submittedAssessments / totalAssessments) * 100).toFixed(1) : '0.0';
+      const assignmentParticipation = totalAssignments > 0 ? ((submittedAssignments / totalAssignments) * 100).toFixed(1) : '0.0';
+      const liveClassParticipation = totalLiveClasses > 0 ? ((attendedLiveClasses / totalLiveClasses) * 100).toFixed(1) : '0.0';
+      const overallParticipation = ((parseFloat(assessmentParticipation) + parseFloat(assignmentParticipation) + parseFloat(liveClassParticipation)) / 3).toFixed(1);
+      
+      let performanceLevel = 'Needs Improvement';
+      if (parseFloat(overallParticipation) >= 80) performanceLevel = 'Excellent';
+      else if (parseFloat(overallParticipation) >= 60) performanceLevel = 'Good';
+      else if (parseFloat(overallParticipation) >= 40) performanceLevel = 'Average';
+      
+      progressList.push({
+        student: { id: student.id, name: student.name, registration_number: student.registration_number },
+        assessments: { total: totalAssessments, submitted: submittedAssessments, participation_rate: assessmentParticipation },
+        assignments: { total: totalAssignments, submitted: submittedAssignments, participation_rate: assignmentParticipation },
+        live_classes: { total: totalLiveClasses, attended: attendedLiveClasses, attendance_rate: liveClassParticipation },
+        overall: { participation_rate: overallParticipation, performance_level: performanceLevel }
+      });
+    }
+    res.json({ success: true, data: progressList });
+  } catch (error) {
+    console.error('Error fetching students progress:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get lecturer progress (for Admin)
+app.get('/api/progress/lecturer/:lecturer_id', async (req, res) => {
+  try {
+    const { lecturer_id } = req.params;
+    const lecturerResult = await pool.query('SELECT * FROM lecturers WHERE id = $1', [lecturer_id]);
+    if (lecturerResult.rows.length === 0) return res.status(404).json({ success: false, error: 'Lecturer not found' });
+    const lecturer = lecturerResult.rows[0];
+    
+    const totalPrograms = parseInt((await pool.query('SELECT COUNT(*) as c FROM programs WHERE lecturer_id = $1', [lecturer_id])).rows[0].c) || 0;
+    const assessmentStats = (await pool.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status IN ('active','published') THEN 1 END) as active, COUNT(CASE WHEN status IN ('completed','expired') THEN 1 END) as completed FROM assessments WHERE lecturer_id = $1", [lecturer_id])).rows[0];
+    const assignmentStats = (await pool.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status IN ('active','open') THEN 1 END) as active, COUNT(CASE WHEN status IN ('completed','closed') THEN 1 END) as completed FROM assignments WHERE lecturer_id = $1", [lecturer_id])).rows[0];
+    const liveClassStats = (await pool.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status IN ('live','scheduled') THEN 1 END) as active, COUNT(CASE WHEN status IN ('ended','completed') THEN 1 END) as completed FROM live_classes WHERE lecturer_id = $1", [lecturer_id])).rows[0];
+    const contentCount = parseInt((await pool.query('SELECT COUNT(*) as c FROM course_content WHERE lecturer_id = $1', [lecturer_id])).rows[0].c) || 0;
+    const announcementCount = parseInt((await pool.query("SELECT COUNT(*) as c FROM announcements WHERE created_by_id = $1 AND created_by_type = 'lecturer'", [lecturer_id])).rows[0].c) || 0;
+    const totalStudents = parseInt((await pool.query('SELECT COUNT(DISTINCT e.student_id) as c FROM enrollments e JOIN programs p ON e.program_id = p.id WHERE p.lecturer_id = $1', [lecturer_id])).rows[0].c) || 0;
+    
+    const totalActivities = parseInt(assessmentStats.total) + parseInt(assignmentStats.total) + parseInt(liveClassStats.total) + contentCount + announcementCount;
+    let activityLevel = 'Low';
+    if (totalActivities >= 30) activityLevel = 'Very Active';
+    else if (totalActivities >= 15) activityLevel = 'Active';
+    else if (totalActivities >= 5) activityLevel = 'Moderate';
+    
+    res.json({ success: true, data: {
+      lecturer: { id: lecturer.id, name: lecturer.name, email: lecturer.email, specialization: lecturer.specialization, employee_id: lecturer.employee_id },
+      programs: { total: totalPrograms },
+      students: { total: totalStudents },
+      assessments: { total_created: parseInt(assessmentStats.total), active: parseInt(assessmentStats.active), completed: parseInt(assessmentStats.completed) },
+      assignments: { total_created: parseInt(assignmentStats.total), active: parseInt(assignmentStats.active), completed: parseInt(assignmentStats.completed) },
+      live_classes: { total_created: parseInt(liveClassStats.total), active: parseInt(liveClassStats.active), completed: parseInt(liveClassStats.completed) },
+      content: { total_created: contentCount },
+      announcements: { total_created: announcementCount },
+      overall: { total_activities: totalActivities, activity_level: activityLevel }
+    }});
+  } catch (error) {
+    console.error('Error fetching lecturer progress:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get all lecturers progress (for Admin list)
+app.get('/api/progress/lecturers', async (req, res) => {
+  try {
+    const lecturers = (await pool.query('SELECT id, name, email, specialization, employee_id, is_active FROM lecturers ORDER BY name')).rows;
+    const progressList = [];
+    
+    for (const lecturer of lecturers) {
+      const assessments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assessments WHERE lecturer_id = $1', [lecturer.id])).rows[0].c) || 0;
+      const assignments = parseInt((await pool.query('SELECT COUNT(*) as c FROM assignments WHERE lecturer_id = $1', [lecturer.id])).rows[0].c) || 0;
+      const liveClasses = parseInt((await pool.query('SELECT COUNT(*) as c FROM live_classes WHERE lecturer_id = $1', [lecturer.id])).rows[0].c) || 0;
+      const programs = parseInt((await pool.query('SELECT COUNT(*) as c FROM programs WHERE lecturer_id = $1', [lecturer.id])).rows[0].c) || 0;
+      
+      const totalActivities = assessments + assignments + liveClasses;
+      let activityLevel = 'Low';
+      if (totalActivities >= 30) activityLevel = 'Very Active';
+      else if (totalActivities >= 15) activityLevel = 'Active';
+      else if (totalActivities >= 5) activityLevel = 'Moderate';
+      
+      progressList.push({
+        lecturer: { id: lecturer.id, name: lecturer.name, email: lecturer.email, specialization: lecturer.specialization, employee_id: lecturer.employee_id, is_active: lecturer.is_active },
+        stats: { programs, assessments, assignments, live_classes: liveClasses, total_activities: totalActivities },
+        overall: { activity_level: activityLevel }
+      });
+    }
+    res.json({ success: true, data: progressList });
+  } catch (error) {
+    console.error('Error fetching lecturers progress:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
+const PORT = process.env.PORT || 5000;
     const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
