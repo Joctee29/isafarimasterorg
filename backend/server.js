@@ -404,6 +404,16 @@ app.post('/api/discussion-replies/upload', upload.single('file'), async (req, re
       });
     }
     
+    // Ensure discussion_replies table has file columns
+    try {
+      await pool.query(`ALTER TABLE discussion_replies ADD COLUMN IF NOT EXISTS file_url VARCHAR(500)`);
+      await pool.query(`ALTER TABLE discussion_replies ADD COLUMN IF NOT EXISTS file_name VARCHAR(255)`);
+      await pool.query(`ALTER TABLE discussion_replies ADD COLUMN IF NOT EXISTS file_type VARCHAR(50)`);
+      await pool.query(`ALTER TABLE discussion_replies ADD COLUMN IF NOT EXISTS file_size INTEGER`);
+    } catch (alterError) {
+      console.log('Column check note:', alterError.message);
+    }
+    
     let file_url = null;
     let file_name = null;
     let file_type = null;
@@ -2361,33 +2371,89 @@ app.delete('/api/students/:id', async (req, res) => {
 // Get all CRs
 app.get('/api/class-representatives', async (req, res) => {
   try {
+    console.log('=== FETCHING ALL CLASS REPRESENTATIVES ===');
+    
+    // First ensure students table exists
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_name = 'students'
+      )
+    `);
+    
+    if (!tableCheck.rows[0].exists) {
+      console.log('⚠️ Students table does not exist, creating...');
+      // Create students table if it doesn't exist
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS students (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          registration_number VARCHAR(100) UNIQUE NOT NULL,
+          email VARCHAR(255),
+          phone VARCHAR(20),
+          course_id INTEGER,
+          academic_year VARCHAR(20),
+          current_semester INTEGER DEFAULT 1,
+          year_of_study INTEGER DEFAULT 1,
+          academic_level VARCHAR(50) DEFAULT 'bachelor',
+          is_active BOOLEAN DEFAULT true,
+          is_cr BOOLEAN DEFAULT false,
+          cr_activated_at TIMESTAMP,
+          cr_activated_by VARCHAR(255),
+          is_locked BOOLEAN DEFAULT false,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      console.log('✅ Students table created');
+      return res.json({ success: true, data: [] });
+    }
+    
+    // Ensure required CR columns exist
+    try {
+      await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS is_cr BOOLEAN DEFAULT false`);
+      await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS cr_activated_at TIMESTAMP`);
+      await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS cr_activated_by VARCHAR(255)`);
+      await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS year_of_study INTEGER DEFAULT 1`);
+      await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS academic_level VARCHAR(50) DEFAULT 'bachelor'`);
+      console.log('✅ CR columns verified/created');
+    } catch (alterError) {
+      console.log('Column check note:', alterError.message);
+    }
+    
     const result = await pool.query(`
       SELECT 
         s.id,
         s.name,
         s.registration_number,
-        s.email,
-        s.phone,
-        s.academic_year,
-        s.current_semester,
-        s.year_of_study,
-        s.academic_level,
-        s.is_cr,
+        COALESCE(s.email, '') as email,
+        COALESCE(s.phone, '') as phone,
+        COALESCE(s.academic_year, '') as academic_year,
+        COALESCE(s.current_semester, 1) as current_semester,
+        COALESCE(s.year_of_study, 1) as year_of_study,
+        COALESCE(s.academic_level, 'bachelor') as academic_level,
+        COALESCE(s.is_cr, false) as is_cr,
         s.cr_activated_at,
-        s.cr_activated_by,
-        c.name as course_name,
-        c.code as course_code,
+        COALESCE(s.cr_activated_by, '') as cr_activated_by,
+        COALESCE(c.name, 'No Course') as course_name,
+        COALESCE(c.code, '') as course_code,
         c.id as course_id
       FROM students s
       LEFT JOIN courses c ON s.course_id = c.id
-      WHERE s.is_cr = true
+      WHERE COALESCE(s.is_cr, false) = true
       ORDER BY s.name ASC
     `);
     
+    console.log('✅ Class Representatives found:', result.rows.length);
     res.json({ success: true, data: result.rows });
   } catch (error) {
-    console.error('Error fetching class representatives:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('❌ Error fetching class representatives:', error);
+    console.error('Error stack:', error.stack);
+    // Return empty array instead of error to prevent frontend crash
+    res.json({ 
+      success: true, 
+      data: [],
+      message: 'No class representatives found or database initializing'
+    });
   }
 });
 
@@ -2948,17 +3014,23 @@ app.get('/api/programs', optionalAuth, async (req, res) => {
       return res.json({ success: true, data: allPrograms });
     }
     
-    // For lecturers by username - find programs by lecturer username/employee_id AND active semester
+    // For lecturers by username - find programs by lecturer username/employee_id
+    // Check if request is from Progress Tracker (skip semester filtering)
+    const skipSemesterFilter = req.query.skip_semester_filter === 'true';
+    
     if (lecturer_username) {
-      // First, get active academic period
-      const activePeriodResult = await pool.query(
-        `SELECT * FROM academic_periods WHERE is_active = true ORDER BY created_at DESC LIMIT 1`
-      );
+      // First, get active academic period (only if not skipping semester filter)
+      let activeSemester = null;
       
-      let activeSemester = 1; // Default to semester 1
-      if (activePeriodResult.rows.length > 0) {
-        activeSemester = activePeriodResult.rows[0].semester;
-        console.log('Active semester from database:', activeSemester);
+      if (!skipSemesterFilter) {
+        const activePeriodResult = await pool.query(
+          `SELECT * FROM academic_periods WHERE is_active = true ORDER BY created_at DESC LIMIT 1`
+        );
+        
+        if (activePeriodResult.rows.length > 0) {
+          activeSemester = activePeriodResult.rows[0].semester;
+          console.log('Active semester from database:', activeSemester);
+        }
       }
       
       // First, try to find lecturer by direct field matches
@@ -2994,21 +3066,39 @@ app.get('/api/programs', optionalAuth, async (req, res) => {
       console.log('Lecturer ID:', lecturer.id);
       console.log('Lecturer Employee ID:', lecturer.employee_id);
       console.log('Lecturer Name:', lecturer.name);
+      console.log('Skip Semester Filter:', skipSemesterFilter);
       console.log('Active Semester Filter:', activeSemester);
       
-      // More flexible query using ILIKE for partial matching AND filter by active semester
-      const result = await pool.query(
-        `SELECT * FROM programs 
-         WHERE (lecturer_id = $1 
-            OR lecturer_name = $2 
-            OR lecturer_name = $3
-            OR lecturer_name ILIKE $4
-            OR lecturer_name ILIKE $5)
-         AND (semester = $6 OR semester IS NULL)
-         ORDER BY created_at DESC`,
-        [lecturer.id, lecturer.employee_id, lecturer.name, `%${lecturer.employee_id}%`, `%${lecturer.name}%`, activeSemester]
-      );
-      console.log(`Found ${result.rows.length} programs for lecturer username: ${lecturer_username} in semester ${activeSemester}`);
+      // Build query based on whether we're filtering by semester
+      let result;
+      if (skipSemesterFilter || activeSemester === null) {
+        // No semester filtering - return all programs for this lecturer
+        result = await pool.query(
+          `SELECT * FROM programs 
+           WHERE (lecturer_id = $1 
+              OR lecturer_name = $2 
+              OR lecturer_name = $3
+              OR lecturer_name ILIKE $4
+              OR lecturer_name ILIKE $5)
+           ORDER BY created_at DESC`,
+          [lecturer.id, lecturer.employee_id, lecturer.name, `%${lecturer.employee_id}%`, `%${lecturer.name}%`]
+        );
+        console.log(`Found ${result.rows.length} programs for lecturer username: ${lecturer_username} (no semester filter)`);
+      } else {
+        // Filter by active semester
+        result = await pool.query(
+          `SELECT * FROM programs 
+           WHERE (lecturer_id = $1 
+              OR lecturer_name = $2 
+              OR lecturer_name = $3
+              OR lecturer_name ILIKE $4
+              OR lecturer_name ILIKE $5)
+           AND (semester = $6 OR semester IS NULL)
+           ORDER BY created_at DESC`,
+          [lecturer.id, lecturer.employee_id, lecturer.name, `%${lecturer.employee_id}%`, `%${lecturer.name}%`, activeSemester]
+        );
+        console.log(`Found ${result.rows.length} programs for lecturer username: ${lecturer_username} in semester ${activeSemester}`);
+      }
       
       return res.json({ success: true, data: result.rows });
     }
@@ -3045,6 +3135,13 @@ app.get('/api/programs', optionalAuth, async (req, res) => {
     if (effectiveUserType === 'admin') {
       const result = await pool.query('SELECT * FROM programs ORDER BY created_at DESC');
       console.log(`Found ${result.rows.length} programs (admin view)`);
+      return res.json({ success: true, data: result.rows });
+    }
+    
+    // No user type specified but user_type=admin in query - return all programs
+    if (user_type === 'admin') {
+      const result = await pool.query('SELECT * FROM programs ORDER BY created_at DESC');
+      console.log(`Found ${result.rows.length} programs (admin query param)`);
       return res.json({ success: true, data: result.rows });
     }
     
@@ -4692,14 +4789,25 @@ app.get('/api/assessments', async (req, res) => {
                 shortTermProgram.target_value?.toLowerCase().includes(studentInfo.department_name?.toLowerCase())
               )) qualifies = true;
             }
-            // Course targeting
-            else if (shortTermProgram.target_type === 'course') {
+            // Course/Courses targeting - CRITICAL FIX: Handle both 'course' and 'courses' (plural)
+            else if (shortTermProgram.target_type === 'course' || shortTermProgram.target_type === 'courses') {
               if (studentInfo.course_name && (
                 shortTermProgram.target_value === studentInfo.course_name ||
                 shortTermProgram.target_value?.toLowerCase() === studentInfo.course_name?.toLowerCase() ||
                 studentInfo.course_name.toLowerCase().includes(shortTermProgram.target_value?.toLowerCase()) ||
                 shortTermProgram.target_value?.toLowerCase().includes(studentInfo.course_name?.toLowerCase())
               )) qualifies = true;
+              // CRITICAL FIX: Handle comma-separated course list
+              if (!qualifies && studentInfo.course_name && shortTermProgram.target_value) {
+                const targetCourses = shortTermProgram.target_value.toLowerCase().split(',').map(c => c.trim()).filter(c => c.length > 0);
+                const courseLower = studentInfo.course_name.toLowerCase().trim();
+                for (const targetCourse of targetCourses) {
+                  if (targetCourse === courseLower || targetCourse.includes(courseLower) || courseLower.includes(targetCourse)) {
+                    qualifies = true;
+                    break;
+                  }
+                }
+              }
             }
             // Year targeting
             else if (shortTermProgram.target_type === 'year') {
@@ -5030,13 +5138,14 @@ app.get('/api/student-assessments', async (req, res) => {
           console.log('   Target Type:', program.target_type);
           console.log('   Target Value:', program.target_value);
           
-          // Check targeting for short-term programs
-          if (program.target_type === 'all') {
-            console.log('   ✅ MATCH: All students');
+        // Check targeting for short-term programs
+          // CRITICAL FIX: If target_type is null, undefined, or 'all', ALL students should see it
+          if (!program.target_type || program.target_type === 'all' || program.target_type === '' || program.target_type === null) {
+            console.log('   ✅ MATCH: All students (target_type:', program.target_type, ')');
             return true;
           }
           
-          // College targeting - with case-insensitive match
+          // College targeting - with case-insensitive and partial match
           if (program.target_type === 'college') {
             if (fullStudentInfo.college_name && program.target_value === fullStudentInfo.college_name) {
               console.log('   ✅ MATCH: College targeting');
@@ -5046,9 +5155,17 @@ app.get('/api/student-assessments', async (req, res) => {
               console.log('   ✅ MATCH: College targeting (case-insensitive)');
               return true;
             }
+            // CRITICAL FIX: Add partial match for college names
+            if (fullStudentInfo.college_name && program.target_value && (
+              fullStudentInfo.college_name.toLowerCase().includes(program.target_value.toLowerCase()) ||
+              program.target_value.toLowerCase().includes(fullStudentInfo.college_name.toLowerCase())
+            )) {
+              console.log('   ✅ MATCH: College targeting (partial match)');
+              return true;
+            }
           }
           
-          // Department targeting - with case-insensitive match
+          // Department targeting - with case-insensitive and partial match
           if (program.target_type === 'department') {
             if (fullStudentInfo.department_name && program.target_value === fullStudentInfo.department_name) {
               console.log('   ✅ MATCH: Department targeting');
@@ -5058,10 +5175,19 @@ app.get('/api/student-assessments', async (req, res) => {
               console.log('   ✅ MATCH: Department targeting (case-insensitive)');
               return true;
             }
+            // CRITICAL FIX: Add partial match for department names
+            if (fullStudentInfo.department_name && program.target_value && (
+              fullStudentInfo.department_name.toLowerCase().includes(program.target_value.toLowerCase()) ||
+              program.target_value.toLowerCase().includes(fullStudentInfo.department_name.toLowerCase())
+            )) {
+              console.log('   ✅ MATCH: Department targeting (partial match)');
+              return true;
+            }
           }
           
-          // Course targeting - with case-insensitive and partial match
-          if (program.target_type === 'course') {
+          // Course/Courses targeting - with case-insensitive and partial match
+          // CRITICAL FIX: Handle both 'course' and 'courses' (plural) target types
+          if (program.target_type === 'course' || program.target_type === 'courses') {
             if (fullStudentInfo.course_name && program.target_value === fullStudentInfo.course_name) {
               console.log('   ✅ MATCH: Course targeting');
               return true;
@@ -5076,6 +5202,17 @@ app.get('/api/student-assessments', async (req, res) => {
             )) {
               console.log('   ✅ MATCH: Course targeting (partial match)');
               return true;
+            }
+            // CRITICAL FIX: Handle comma-separated course list
+            if (fullStudentInfo.course_name && program.target_value) {
+              const targetCourses = program.target_value.toLowerCase().split(',').map(c => c.trim()).filter(c => c.length > 0);
+              const courseLower = fullStudentInfo.course_name.toLowerCase().trim();
+              for (const targetCourse of targetCourses) {
+                if (targetCourse === courseLower || targetCourse.includes(courseLower) || courseLower.includes(targetCourse)) {
+                  console.log('   ✅ MATCH: Course targeting (comma-separated list)');
+                  return true;
+                }
+              }
             }
           }
           
@@ -7188,32 +7325,58 @@ app.get('/api/live-classes', async (req, res) => {
             console.log('   🔍 Checking COURSES targeting...');
             console.log('      Target Value:', shortTermProgram.target_value);
             console.log('      Student Course:', studentInfo.course_name);
+            console.log('      Student College:', studentInfo.college_name);
+            console.log('      Student Department:', studentInfo.department_name);
             
-            // CRITICAL: For "courses" targeting, target_value contains course name(s)
-            // Match if student's course matches the target
+            // CRITICAL: For "courses" targeting, target_value can contain:
+            // 1. Single course name (e.g., "Computer Science")
+            // 2. Multiple course names separated by comma (e.g., "Computer Science, Information Technology")
+            // 3. Course ID or partial name
             if (studentInfo.course_name && shortTermProgram.target_value) {
               const targetLower = shortTermProgram.target_value.toLowerCase().trim();
               const courseLower = studentInfo.course_name.toLowerCase().trim();
               
-              // Exact match
-              if (targetLower === courseLower) {
-                console.log('   ✅ COURSES targeting - Exact match');
-                qualifies = true;
-              }
-              // Partial match (either direction)
-              else if (targetLower.includes(courseLower) || courseLower.includes(targetLower)) {
-                console.log('   ✅ COURSES targeting - Partial match');
-                qualifies = true;
-              }
-              // Word-based matching
-              else {
-                const targetWords = targetLower.split(/\s+/).filter(w => w.length > 2);
+              // Check if target_value contains multiple courses (comma-separated)
+              const targetCourses = targetLower.split(',').map(c => c.trim()).filter(c => c.length > 0);
+              
+              for (const targetCourse of targetCourses) {
+                // Exact match
+                if (targetCourse === courseLower) {
+                  console.log('   ✅ COURSES targeting - Exact match');
+                  qualifies = true;
+                  break;
+                }
+                // Partial match (either direction)
+                if (targetCourse.includes(courseLower) || courseLower.includes(targetCourse)) {
+                  console.log('   ✅ COURSES targeting - Partial match');
+                  qualifies = true;
+                  break;
+                }
+                // Word-based matching
+                const targetWords = targetCourse.split(/\s+/).filter(w => w.length > 2);
                 const courseWords = courseLower.split(/\s+/).filter(w => w.length > 2);
                 const commonWords = targetWords.filter(word => courseWords.includes(word));
                 if (commonWords.length >= 1) {
                   console.log('   ✅ COURSES targeting - Word match:', commonWords);
                   qualifies = true;
+                  break;
                 }
+              }
+            }
+            
+            // FALLBACK: If no course match, check if student's regular programs match
+            if (!qualifies && studentPrograms && studentPrograms.length > 0) {
+              const targetLower = shortTermProgram.target_value?.toLowerCase().trim() || '';
+              const programMatch = studentPrograms.some(p => {
+                if (!p) return false;
+                const pLower = p.toLowerCase().trim();
+                return pLower === targetLower || 
+                       pLower.includes(targetLower) || 
+                       targetLower.includes(pLower);
+              });
+              if (programMatch) {
+                console.log('   ✅ COURSES targeting - Program name match');
+                qualifies = true;
               }
             }
             
@@ -9132,7 +9295,7 @@ app.get('/api/short-term-programs/student', async (req, res) => {
         return true;
       }
       
-      // College targeting - with case-insensitive match
+      // College targeting - with case-insensitive and partial match
       if (program.target_type === 'college') {
         if (studentInfo.college_name && program.target_value === studentInfo.college_name) {
           console.log(`✅ Program - College match: ${program.target_value}`);
@@ -9142,9 +9305,17 @@ app.get('/api/short-term-programs/student', async (req, res) => {
           console.log(`✅ Program - College match (case-insensitive): ${program.target_value}`);
           return true;
         }
+        // CRITICAL FIX: Add partial match for college names
+        if (studentInfo.college_name && program.target_value && (
+          studentInfo.college_name.toLowerCase().includes(program.target_value.toLowerCase()) ||
+          program.target_value.toLowerCase().includes(studentInfo.college_name.toLowerCase())
+        )) {
+          console.log(`✅ Program - College match (partial): ${program.target_value}`);
+          return true;
+        }
       }
       
-      // Department targeting - with case-insensitive match
+      // Department targeting - with case-insensitive and partial match
       if (program.target_type === 'department') {
         if (studentInfo.department_name && program.target_value === studentInfo.department_name) {
           console.log(`✅ Program - Department match: ${program.target_value}`);
@@ -9154,10 +9325,19 @@ app.get('/api/short-term-programs/student', async (req, res) => {
           console.log(`✅ Program - Department match (case-insensitive): ${program.target_value}`);
           return true;
         }
+        // CRITICAL FIX: Add partial match for department names
+        if (studentInfo.department_name && program.target_value && (
+          studentInfo.department_name.toLowerCase().includes(program.target_value.toLowerCase()) ||
+          program.target_value.toLowerCase().includes(studentInfo.department_name.toLowerCase())
+        )) {
+          console.log(`✅ Program - Department match (partial): ${program.target_value}`);
+          return true;
+        }
       }
       
-      // Course targeting - with case-insensitive and partial match
-      if (program.target_type === 'course') {
+      // Course/Courses targeting - with case-insensitive and partial match
+      // CRITICAL FIX: Handle both 'course' and 'courses' (plural) target types
+      if (program.target_type === 'course' || program.target_type === 'courses') {
         if (studentInfo.course_name && program.target_value === studentInfo.course_name) {
           console.log(`✅ Program - Course match: ${program.target_value}`);
           return true;
@@ -9172,6 +9352,17 @@ app.get('/api/short-term-programs/student', async (req, res) => {
         )) {
           console.log(`✅ Program - Course match (partial): ${program.target_value}`);
           return true;
+        }
+        // CRITICAL FIX: Handle comma-separated course list
+        if (studentInfo.course_name && program.target_value) {
+          const targetCourses = program.target_value.toLowerCase().split(',').map(c => c.trim()).filter(c => c.length > 0);
+          const courseLower = studentInfo.course_name.toLowerCase().trim();
+          for (const targetCourse of targetCourses) {
+            if (targetCourse === courseLower || targetCourse.includes(courseLower) || courseLower.includes(targetCourse)) {
+              console.log(`✅ Program - Course match (comma-separated list): ${program.target_value}`);
+              return true;
+            }
+          }
         }
       }
       

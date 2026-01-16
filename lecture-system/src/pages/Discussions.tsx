@@ -206,18 +206,29 @@ export const Discussions = () => {
             : d
         ));
         
+        // Refresh replies in the modal
+        if (showReplies) {
+          const replyResult = await response.json();
+          setReplies(prev => [...prev, replyResult.data]);
+        }
+        
         alert("Reply sent successfully!");
         setReplyContent("");
         setSelectedFile(null);
         setShowReplyForm(false);
-        setSelectedDiscussion(null);
       } else {
-        const errorResult = await response.json();
-        alert(errorResult.error || 'Failed to send reply. Please check your connection.');
+        let errorMessage = 'Failed to send reply.';
+        try {
+          const errorResult = await response.json();
+          errorMessage = errorResult.error || errorMessage;
+        } catch (e) {
+          // Response might not be JSON
+        }
+        alert(errorMessage);
       }
     } catch (error) {
       console.error('Error sending reply:', error);
-      alert('Failed to send reply. Please check your connection.');
+      alert('Failed to send reply. Network error - please check your connection and try again.');
     }
   };
   
@@ -900,7 +911,7 @@ export const Discussions = () => {
                   onClick={handleReplyToDiscussion}
                   disabled={!replyContent.trim() && !selectedFile}
                 >
-                  Add Reply
+                  Send Reply
                 </Button>
               </div>
             </div>

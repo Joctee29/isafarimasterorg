@@ -223,7 +223,8 @@ export const ProgressTracker = () => {
 
     const fetchPrograms = async () => {
       try {
-        const response = await fetch('https://must-lms-backend.onrender.com/api/programs');
+        // Use user_type=admin to get all programs from backend (no semester filtering)
+        const response = await fetch('https://must-lms-backend.onrender.com/api/programs?user_type=admin&skip_semester_filter=true');
         if (response.ok) {
           const result = await response.json();
           const filteredPrograms = result.data?.filter((program: Program) => 

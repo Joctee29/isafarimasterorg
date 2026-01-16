@@ -80,14 +80,11 @@ export const ProgressTracker = () => {
       try {
         const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
         
-        const programsResponse = await fetch('https://must-lms-backend.onrender.com/api/programs');
+        // Use lecturer_username parameter with skip_semester_filter for Progress Tracker
+        const programsResponse = await fetch(`https://must-lms-backend.onrender.com/api/programs?lecturer_username=${encodeURIComponent(currentUser.username || '')}&skip_semester_filter=true`);
         if (programsResponse.ok) {
           const programsResult = await programsResponse.json();
-          const lecturerPrograms = programsResult.data?.filter((program: Program) => 
-            program.lecturer_name === currentUser.username || 
-            program.lecturer_id === currentUser.id ||
-            String(program.lecturer_id) === String(currentUser.id)
-          ) || [];
+          const lecturerPrograms = programsResult.data || [];
           
           setPrograms(lecturerPrograms);
           

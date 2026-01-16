@@ -561,13 +561,21 @@ export const Discussions = () => {
             ? { ...d, replies: d.replies + 1 }
             : d
         ));
+        
+        alert("Reply sent successfully!");
       } else {
-        const errorResult = await response.json();
-        alert(errorResult.error || 'Failed to add reply');
+        let errorMessage = 'Failed to send reply.';
+        try {
+          const errorResult = await response.json();
+          errorMessage = errorResult.error || errorMessage;
+        } catch (e) {
+          // Response might not be JSON
+        }
+        alert(errorMessage);
       }
     } catch (error) {
-      console.error('Error adding reply:', error);
-      alert('Failed to add reply. Please check your connection.');
+      console.error('Error sending reply:', error);
+      alert('Failed to send reply. Network error - please check your connection and try again.');
     }
   };
   
@@ -1327,7 +1335,7 @@ export const Discussions = () => {
                   onClick={handleAddReply}
                   disabled={!newReply.trim() && !selectedFile}
                 >
-                  Add Reply
+                  Send Reply
                 </Button>
               </div>
             </div>
