@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { CourseListDialog } from "@/components/CourseListDialog";
 import { 
   Upload, 
   Download, 
@@ -17,7 +18,8 @@ import {
   XCircle,
   FileText,
   AlertCircle,
-  BookOpen
+  BookOpen,
+  List
 } from "lucide-react";
 
 interface UploadResult {
@@ -31,6 +33,7 @@ export const BulkUpload = () => {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [courseListOpen, setCourseListOpen] = useState(false);
 
   // Clear file and results when changing tabs
   const handleTabChange = (newTab: string) => {
@@ -43,11 +46,11 @@ export const BulkUpload = () => {
   // Generate CSV template for students
   const downloadStudentTemplate = () => {
     const template = [
-      ['name', 'email', 'phone', 'registrationNumber', 'academicYear', 'courseId', 'currentSemester', 'yearOfStudy', 'academicLevel', 'password'],
-      ['Joctan Elvin', 'joctan.elvin@student.must.ac.tz', '+255712345678', 'MUST/2024/001234', '2024', '1', '1', '1', 'bachelor', 'student123'],
-      ['Elizabeth Ernest', 'elizabeth.ernest@student.must.ac.tz', '+255723456789', 'MUST/2024/001235', '2024', '1', '1', '1', 'bachelor', 'student123'],
-      ['Danford Mwankenja', 'danford.mwankenja@student.must.ac.tz', '+255734567890', 'MUST/2024/001236', '2024', '1', '1', '1', 'bachelor', 'student123'],
-      ['Asteria Mombo', 'asteria.mombo@student.must.ac.tz', '+255745678901', 'MUST/2024/001237', '2024', '1', '1', '1', 'bachelor', 'student123']
+      ['name', 'email', 'phone', 'registrationNumber', 'academicYear', 'course', 'currentSemester', 'yearOfStudy', 'academicLevel', 'password'],
+      ['Joctan Elvin', 'joctan.elvin@student.must.ac.tz', '+255712345678', 'MUST/2024/001234', '2024', 'BCS101', '1', '1', 'bachelor', 'student123'],
+      ['Elizabeth Ernest', 'elizabeth.ernest@student.must.ac.tz', '+255723456789', 'MUST/2024/001235', '2024', 'IT201', '1', '1', 'bachelor', 'student123'],
+      ['Danford Mwankenja', 'danford.mwankenja@student.must.ac.tz', '+255734567890', 'MUST/2024/001236', '2024', 'SE301', '1', '1', 'bachelor', 'student123'],
+      ['Asteria Mombo', 'asteria.mombo@student.must.ac.tz', '+255745678901', 'MUST/2024/001237', '2024', 'DS401', '1', '1', 'bachelor', 'student123']
     ];
     
     const csv = Papa.unparse(template);
@@ -170,9 +173,12 @@ export const BulkUpload = () => {
             .map((row: any, index: number) => {
               console.log(`Row ${index + 1}:`, row);
               
-              // Validate required fields - name, email, courseId are required by backend
-              if (!row.name?.trim() || !row.email?.trim() || !row.courseId?.trim()) {
-                console.warn(`Row ${index + 1}: Missing required fields (name, email, or courseId)`);
+              // Support both "course" and "courseId" for backward compatibility
+              const courseValue = row.course || row.courseId;
+              
+              // Validate required fields - name, email, course are required by backend
+              if (!row.name?.trim() || !row.email?.trim() || !courseValue?.trim()) {
+                console.warn(`Row ${index + 1}: Missing required fields (name, email, or course)`);
                 return null;
               }
 
@@ -182,7 +188,7 @@ export const BulkUpload = () => {
                 phone: row.phone?.trim() || null,
                 registrationNumber: row.registrationNumber?.trim() || null,
                 academicYear: row.academicYear?.trim() || new Date().getFullYear().toString(),
-                courseId: isNaN(parseInt(row.courseId)) ? row.courseId.trim() : parseInt(row.courseId),
+                courseId: isNaN(parseInt(courseValue)) ? courseValue.trim() : parseInt(courseValue),
                 currentSemester: parseInt(row.currentSemester) || 1,
                 yearOfStudy: parseInt(row.yearOfStudy) || 1,
                 academicLevel: row.academicLevel?.trim() || 'bachelor',
@@ -194,7 +200,7 @@ export const BulkUpload = () => {
           console.log('Processed students to upload:', students);
 
           if (students.length === 0) {
-            toast.error("No valid students found in CSV. Make sure name, email, and courseId columns are filled.");
+            toast.error("No valid students found in CSV. Make sure name, email, and course columns are filled.");
             setUploading(false);
             return;
           }
@@ -631,12 +637,32 @@ export const BulkUpload = () => {
                 <li><strong>phone</strong> (optional): Phone number</li>
                 <li><strong>registrationNumber</strong> (required): Registration number (e.g., MUST/2024/001234)</li>
                 <li><strong>academicYear</strong> (optional): Academic year (defaults to current year)</li>
-                <li><strong>courseId</strong> (required): Course ID (number or text, e.g., 1 or COURSE-001)</li>
+                <li><strong>course</strong> (required): Course identifier - accepts three formats:
+                  <ul className="list-circle list-inside ml-4 mt-1 space-y-1">
+                    <li><strong>Course Code (recommended)</strong>: e.g., "BCS101", "IT201", "SE301"</li>
+                    <li>Course Name: e.g., "Bachelor of Computer Science"</li>
+                    <li>Numeric ID: e.g., "1", "42"</li>
+                  </ul>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    💡 Tip: Course codes are unique and easier to remember than numeric IDs.
+                  </p>
+                </li>
                 <li><strong>currentSemester</strong> (optional): Current semester (defaults to 1)</li>
                 <li><strong>yearOfStudy</strong> (optional): Year of study 1-6 (defaults to 1)</li>
                 <li><strong>academicLevel</strong> (optional): certificate/diploma/bachelor/masters/phd (defaults to 'bachelor')</li>
                 <li><strong>password</strong> (optional): Password (defaults to 'student123')</li>
               </ul>
+              
+              <div className="pt-4">
+                <Button 
+                  onClick={() => setCourseListOpen(true)} 
+                  variant="outline" 
+                  className="w-full"
+                >
+                  <List className="mr-2 h-4 w-4" />
+                  View Available Courses
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -967,6 +993,9 @@ export const BulkUpload = () => {
           </Card>
         </TabsContent>
       </Tabs>
+      
+      {/* Course List Dialog */}
+      <CourseListDialog open={courseListOpen} onOpenChange={setCourseListOpen} />
     </div>
   );
 };
