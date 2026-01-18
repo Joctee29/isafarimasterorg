@@ -24,15 +24,6 @@ export const StudentLiveClass = ({ classId, onLeaveClass }: LiveClassViewerProps
   // Load live classes on component mount
   useEffect(() => {
     fetchLiveClasses();
-    
-    // Set up automatic refresh every 10 seconds to check for status updates
-    const interval = setInterval(() => {
-      console.log('🔄 Auto-refreshing live classes...');
-      fetchLiveClasses();
-    }, 10000); // 10 seconds - more frequent to catch status changes quickly
-    
-    // Cleanup interval on component unmount
-    return () => clearInterval(interval);
   }, []);
 
   // No authentication required - Google Meet will handle its own auth when student clicks join
