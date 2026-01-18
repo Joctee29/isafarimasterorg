@@ -946,6 +946,7 @@ export const Assessment = () => {
   const handleViewStudentSubmission = (submission: StudentSubmission) => {
     console.log('=== VIEW STUDENT SUBMISSION ===');
     console.log('Viewing submission from:', submission.studentName);
+    console.log('Full submission data:', submission);
     
     // Load existing manual scores if available
     if (submission.manual_scores) {
@@ -955,13 +956,10 @@ export const Assessment = () => {
       setGradingScores({});
     }
     
-    // Load existing manual feedback if available
-    if (submission.manual_feedback) {
-      console.log('Loading existing manual feedback:', submission.manual_feedback);
-      setQuestionFeedback(submission.manual_feedback);
-    } else {
-      setQuestionFeedback({});
-    }
+    // Load existing manual feedback if available - CHECK BOTH FIELDS
+    const feedbackData = submission.manual_feedback || submission.feedback || {};
+    console.log('Loading existing manual feedback:', feedbackData);
+    setQuestionFeedback(feedbackData);
     
     setSelectedSubmission(submission);
     setViewMode('student-review');
@@ -1842,7 +1840,7 @@ export const Assessment = () => {
                     <div className="space-y-2">
                       {newQuestion.options?.map((option, index) => (
                         <div key={index} className="flex items-center space-x-2">
-                          {/* Show correct answer radio only when Auto-Grade is ON */}
+                          {/* Show correct answer radio ONLY when Auto-Grade is ON */}
                           {newAssessment.autoGrade && (
                             <input 
                               type="radio" 
@@ -1860,8 +1858,8 @@ export const Assessment = () => {
                       ))}
                     </div>
                     {!newAssessment.autoGrade && (
-                      <p className="text-xs text-orange-600 mt-1">
-                        📝 Correct answers not needed - Manual grading mode
+                      <p className="text-xs text-orange-600 mt-2">
+                        📝 <strong>Manual Grading Mode:</strong> Correct answers not needed - you will grade each question manually
                       </p>
                     )}
                   </div>
